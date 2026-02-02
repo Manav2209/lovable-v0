@@ -1,12 +1,12 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { Sandbox } from "@e2b/code-interpreter";
 
-export function createSandboxTools(sandbox: Sandbox) {
+
+export function fileTools(){
 
   const createFile = tool(
     async ({ location, content }) => {
-      await sandbox.files.write(location, content);
+    
       return "File created";
     },
     {
@@ -21,7 +21,7 @@ export function createSandboxTools(sandbox: Sandbox) {
 
   const updateFile = tool(
     async ({ location, content }) => {
-      await sandbox.files.write(location, content);
+    
       return "File updated";
     },
     {
@@ -36,7 +36,7 @@ export function createSandboxTools(sandbox: Sandbox) {
 
   const deleteFile = tool(
     async ({ location }) => {
-      await sandbox.files.remove(location);
+    
       return "File deleted";
     },
     {
@@ -50,7 +50,7 @@ export function createSandboxTools(sandbox: Sandbox) {
 
   const readFile = tool(
     async ({ location }) => {
-      return await sandbox.files.read(location);
+    
     },
     {
       name: "read_file",

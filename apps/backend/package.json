@@ -12,7 +12,8 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@e2b/code-interpreter": "^2.3.3",
+    "shared-redis":"*",
+    "types":"*",
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.1.17",
     "@langchain/google-genai": "^2.1.13",
@@ -24,14 +25,12 @@
     "ai": "^6.0.50",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
-    "e2b": "^2.10.5",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "langchain": "^1.2.14",
     "zod": "^4.3.6"
   },
   "scripts": {
-    "e2b:build:dev": "cd my-template && npx tsx build.dev.ts",
-    "e2b:build:prod": "cd my-template && npx tsx build.prod.ts"
+    "dev": "bun run ./src/index.ts"
   }
 }

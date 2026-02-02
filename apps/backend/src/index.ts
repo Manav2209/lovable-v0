@@ -1,30 +1,24 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
-import bcrypt from "bcrypt"
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText } from 'ai';
-import { Sandbox } from '@e2b/code-interpreter'
-
 import {
   LoginSchema,
   SignUpSchema,
   conversationSchema,
   createProjectSchema,
 } from "./lib/schema";
-
-import { authMiddleware } from "./lib/middleware";
+import { authMiddleware } from "./middleware";
 import { createTitle } from "./lib/helper";
+import { db } from "database";
+import {
+  conversationHistory,
+  projects,
+  users,
+} from "../../../packages/database/schema/tables";
 
-import { db }  from "database"
-
-import { SYSTEM_PROMPT } from "./lib/prompt";
-
-import { conversationHistory, projects, users } from "../../../packages/database/schema/tables";
-import { createSandboxTools } from "./lib/tools";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 
 const app = express();
 
@@ -74,7 +68,6 @@ app.post("/signup", async (req, res) => {
   });
 });
 
-
 app.post("/login", async (req, res) => {
   const { success, data } = LoginSchema.safeParse(req.body);
 
@@ -102,10 +95,7 @@ app.post("/login", async (req, res) => {
     });
   }
 
-  const validPassword = await bcrypt.compare(
-    data.password,
-    user.password
-  );
+  const validPassword = await bcrypt.compare(data.password, user.password);
 
   if (!validPassword) {
     return res.status(401).json({
@@ -115,10 +105,7 @@ app.post("/login", async (req, res) => {
     });
   }
 
-  const token = jwt.sign(
-    { id: user.id },
-    process.env.JWT_SECRET!
-  );
+  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET!);
 
   return res.status(200).json({
     success: true,
@@ -137,7 +124,7 @@ app.post("/project", authMiddleware, async (req, res) => {
     return res.status(400).json({
       success: false,
       data: null,
-      error: "INVALID_REQUEST",
+      error: "INVALID_REQUEST"
     });
   }
 
@@ -152,13 +139,26 @@ app.post("/project", authMiddleware, async (req, res) => {
     })
     .returning();
 
+    const [message] = await db
+    .insert(conversationHistory)
+    .values({
+      projectId: project!.id,
+      type: "TEXT_MESSAGE",
+      from: "USER",
+      contents: data.prompt,
+      toolCall: null,
+    })
+    .returning();
+
   return res.status(201).json({
     success: true,
-    data: project,
+    data: {
+      project,
+      messageId: message!.id,
+    },
     error: null,
   });
 });
-
 
 app.get("/projects", authMiddleware, async (req, res) => {
   const userProjects = await db
@@ -175,17 +175,13 @@ app.get("/projects", authMiddleware, async (req, res) => {
 });
 
 app.get("/project/:projectId", authMiddleware, async (req, res) => {
+
   const { projectId } = req.params;
 
   const projectResult = await db
     .select()
     .from(projects)
-    .where(
-      and(
-        eq(projects.id, projectId),
-        eq(projects.userId, req.userId!)
-      )
-    )
+    .where(and(eq(projects.id, projectId), eq(projects.userId, req.userId!)))
     .limit(1);
 
   if (projectResult.length === 0) {
@@ -212,11 +208,7 @@ app.get("/project/:projectId", authMiddleware, async (req, res) => {
   });
 });
 
-
-app.post(
-  "/project/conversation/:projectId",
-  authMiddleware,
-  async (req, res) => {
+app.post("/project/conversation/:projectId", authMiddleware, async (req, res) => {
     const { projectId } = req.params;
     const { success, data } = conversationSchema.safeParse(req.body);
 
@@ -231,12 +223,7 @@ app.post(
     const project = await db
       .select()
       .from(projects)
-      .where(
-        and(
-          eq(projects.id, projectId),
-          eq(projects.userId, req.userId!)
-        )
-      )
+      .where(and(eq(projects.id, projectId), eq(projects.userId, req.userId!)))
       .limit(1);
 
     if (project.length === 0) {
@@ -266,45 +253,17 @@ app.post(
   }
 );
 
-app.post("/prompt", async(req, res) => {
-  const { prompt } = req.body;
-  const TEMPLATE_ID='006p4gym7bnhmfpwl03u'
 
-  const sandbox = await Sandbox.create(TEMPLATE_ID)
-  const host = sandbox.getHost(5173)
-
-  const tools = createSandboxTools(sandbox);
-  const agent = new ChatGoogleGenerativeAI({
-    model: "gemini-2.5-flash",
-    temperature: 0,
-    streaming: true,
-  }).bindTools(tools);
-  
+// app.post("/project/:projectId/run" , authMiddleware , async (req , res) => {
+//   const projectId = req.params.projectId;
 
 
-  const stream = await agent.stream([
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: prompt },
-  ]);
-
-  for await (const chunk of stream) {
-    // Optional: log tool calls
-    if (chunk.tool_calls?.length) {
-      for (const call of chunk.tool_calls) {
-        console.log("TOOL:", call.name, call.args.location);
-      }
-    }
-  }
-  
-  await sandbox.runCode("npm install");
-  await sandbox.runCode("npm run dev")
 
 
-    res.json({
-      url: `https://${host}`
-    })
+// })
 
-});
+
+
 app.listen(3000, () => {
   console.log("App is listening on port 3000");
 });
