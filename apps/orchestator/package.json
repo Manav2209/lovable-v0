@@ -1,0 +1,20 @@
+{
+  "name": "orchestator",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "npm run build && node ./dist/src/index.js"
+  },
+  "devDependencies": {
+    "shared-redis": "*",
+    "types": "*",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0"
+  }
+}

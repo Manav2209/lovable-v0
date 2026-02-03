@@ -1,0 +1,17 @@
+{
+  "name": "control",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev" :"bun run ./src/index.ts"
+  },
+  "devDependencies": {
+    "shared-redis" :"*",
+    "types" :"*",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
