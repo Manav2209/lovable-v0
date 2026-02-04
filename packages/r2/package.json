@@ -1,18 +1,18 @@
 {
-  "name": "control",
+  "name": "r2",
   "module": "index.ts",
   "type": "module",
   "private": true,
-  "scripts": {
-    "dev" :"bun run ./src/index.ts"
+  "exports":{
+    ".": "./index.ts"
   },
   "devDependencies": {
-    "r2":"*",
-    "shared-redis" :"*",
-    "types" :"*",
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.982.0"
   }
 }

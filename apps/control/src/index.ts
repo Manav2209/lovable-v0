@@ -22,7 +22,39 @@ async function main() {
             }
             );
         console.log("Reading from Orchestator")
-        console.log(response)
+        
+        if (!response) continue;
+
+        for ( const stream of response){
+            for (const message of stream.messages) {
+
+                const id = message.id;
+                const fields = message.message;
+                lastId = id;
+
+                console.log("Received from OrchestatorToControl:");
+                console.log({
+                id,
+                fields,
+                });
+
+                switch(fields.type){
+                    case "PROJECT_INITIALIZED": 
+
+                    // pull the template from the R2
+
+                    // Pushing initalization to serving Pod
+
+                    // Waiting for Response from Serving Pod
+                    
+
+                    break;
+                }
+            }
+        }
+
+
+
         
     }
 
