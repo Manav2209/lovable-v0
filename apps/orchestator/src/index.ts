@@ -3,8 +3,10 @@ import { BackendToOrchestator  , OrchestatorToControl , ServingToOrchestator , C
 import { createProjectPod } from "./handler/project";
 import type { ChatMessage, ServingResponse } from "./types";
 
-// we will store the response from Control and Server Pod
+// Redis initalization
+const redis = RedisManager.getStandardClient();
 
+// we will store the response from Control and Server Pod
 const serverResponses = new Map<string , (v: string) => void>();
 const controlResponses = new Map<string , (v: string ) => void>();
 
@@ -20,10 +22,6 @@ function waitForControl(projectId: string) {
         controlResponses.set(projectId, resolve);
     });
 }
-
-
-// Redis initalization
-const redis = RedisManager.getStandardClient();
 
 async function ListenBackend() {
 
@@ -46,17 +44,20 @@ async function ListenBackend() {
     const messages = response[0]!.messages;
 
         for (const msg of messages) {
+
+            
         
             lastId = msg.id;
             const  msgfromBackend  = msg.message as ChatMessage
             const type = msgfromBackend.type  as string;
-            const payload = msgfromBackend.payload;
+            const payloadRaw = msg.message.payload as string;
 
+            const payload = JSON.parse(payloadRaw);
+            console.log(payload)
             const { projectId , jobId , userId} = payload;
-
             switch(type){
                 case "CREATE_PROJECT":
-                    createProject(projectId)
+                    await createProject(projectId)
                     break;
 
                 case "PROJECT_BUILD":
@@ -64,7 +65,6 @@ async function ListenBackend() {
                     break;
                     
             } 
-
         }
         }
     
@@ -84,6 +84,7 @@ async function ListenControlPod() {
 
     }    
 }
+
 async function ListenServicePod() {
     let lastId = "$";
 
@@ -119,15 +120,18 @@ async function ListenServicePod() {
 }
 
 async function createProject(projectId : string){
-    await createProjectPod(projectId);
-    await redis.xAdd(
+    const id = "proj-"+projectId;
+    await createProjectPod(id);
+    console.log("Pod created")
+    const message = await redis.xAdd(
         OrchestatorToControl,
-        projectId,
+        "*",
         {
-            type:"PROJECT_INITIALIZED",
+        type:"PROJECT_INITIALIZED",
+        projectId: id
         }
     );
-
+    console.log("Message send" , message)
 }
 async function buildProject(){
     console.log("BUILD_PROJECT is being called")

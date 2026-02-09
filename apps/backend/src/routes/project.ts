@@ -34,6 +34,7 @@ projectRouter.post("/project", authMiddleware, async (req, res) => {
             userId: req.userId!,
         })
         .returning();
+    const projectId = project!.id as string
     
     const [message] = await db
         .insert(conversationHistory)
@@ -50,11 +51,11 @@ projectRouter.post("/project", authMiddleware, async (req, res) => {
         await redis.xAdd(BackendToOrchestator , "*" , 
             {
                 type: "CREATE_PROJECT",
-                payload:{
-                    projectId: project?.id,
+                payload: JSON.stringify({
+                    projectId: projectId,
                     jobId: jobId,
-                    userId : req.userId!
-                }
+                    userId: req.userId!
+                })
             }
         );
 

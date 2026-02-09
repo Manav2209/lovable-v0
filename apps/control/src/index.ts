@@ -1,74 +1,118 @@
+import 'dotenv/config'
 import {RedisManager} from "shared-redis";
-import {OrchestatorToControl} from "types";
+import { OrchestatorToControl, ControlToServing} from "types";
 
 
-pullTemplatefromR2(projectId) {
+const bucketName = process.env.BUCKET_NAME;
 
-}
-async function main() { 
+
+const redis = RedisManager.getStandardClient();
+
+const inflight = new Set<string>();
+
+const processing = new Map<
+    string,
+    (value: { success: boolean; payload?: string }) => void
+>();
+
+function waitForServingConfirmation(
+    projectId: string,
+    timeoutMs = 60_000,
+    ) {
+        return new Promise<{ success: boolean; payload?: string }>(
+        (resolve, reject) => {
     
-    const redis = RedisManager.getStandardClient();
-    let lastId = "$"
-    while(true) {
-        
+            const timer = setTimeout(() => {
+            processing.delete(projectId);
+            reject(new Error("Serving pod timeout"));
+            }, timeoutMs);
+    
+            processing.set(projectId, (value) => {
+            clearTimeout(timer);
+            resolve(value);
+            });
+        },
+        );
+    }
 
-        const response = await redis.xRead(
-            [
-                {
-                key: OrchestatorToControl,
-                id: lastId,
-                },
-            ],
-            {
-                BLOCK: 5000, // wait 5s
-                COUNT: 10,
-            }
-            );
-        console.log("Reading from Orchestator")
-        
-        if (!response) continue;
 
-        for ( const stream of response){
-            for (const message of stream.messages) {
+async function ListenOrchestator(){
+    console.log("Reading from Orchestator")
+    let lastId = "0";
+    while (true) {
+        const res = await redis.xRead(
+            [{ key: OrchestatorToControl, id: lastId }],
+            { BLOCK: 0},
+        );
 
-                lastId = message.id;
+    
+        if (!res) continue;
+    
+        const messages = res[0]!.messages;
 
-                const fields = message.message as any;
+            for (const msg of messages) {
+                
+                lastId = msg.id;
+                const msgfromOrch = msg.message;
+                console.log("Message:",msgfromOrch)
+                const type = msgfromOrch.type;
+                const projectId = msg.message.projectId!
 
-                const projectId = fields.projectId;
-                const type = fields.type;
-
-                if (!projectId || !type) continue;
-
-                console.log("CONTROL <- ORCH", projectId, type);
-
-                switch(fields.type){
+                switch(type){
                     case "PROJECT_INITIALIZED": 
-
-                    // pull the template from the R2
-                    await pullTemplatefromR2(projectId)
+                    if (inflight.has(projectId)) {
+                        console.log("Already inflight:", projectId);
+                        break;
+                        }
+                
+                        inflight.add(projectId);
+                        try{
+                             // pull the template from the R2
+                            await pullTemplatefromR2(projectId);
 
                     // Pushing initalization to serving Pod
-                    await pushProjectInitializationToServingPod(
-                        projectId,
-                        redis,
-                      );
-
+                            await redis.xAdd(
+                                ControlToServing,
+                                "*",
+                                {
+                                projectId,
+                                type: "PROJECT_INITIALIZED",
+                                },
+                            )
                     // Waiting for Response from Serving Pod
-                    await waitForProjectInitializationConfirmation(projectId);
+                        const result =
+                        await waitForServingConfirmation(projectId);
+        
+                        if (!result.success) {
+                            throw new Error(result.payload || "Serving failed");
+                        }
+                            console.log(
+                                `[${projectId}] initialization done`,
+                            );
 
-                    
+                        }catch(e){
+                            console.error(
+                                `[${projectId}] initialization failed`,
+                                e
+                            );
+                        } finally {
+                            inflight.delete(projectId);
+                        }
+
 
                     break;
                 }
             }
-        }
-
-
-
         
     }
+}
 
+async function pullTemplatefromR2(projectId: string) {
+
+
+}
+async function main() { 
+    ListenOrchestator()
 }
 
 main()

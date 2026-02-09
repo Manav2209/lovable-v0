@@ -5,5 +5,5 @@ export type ServingResponse = {
 
 export type ChatMessage = {
     type: string;
-    payload: any;
+    payload: string
 };

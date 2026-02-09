@@ -23,7 +23,7 @@ import {
     type PutObjectCommandInput,
     type PutObjectCommandOutput,
 } from "@aws-sdk/client-s3";
-  
+
 const s3Config= new S3Client({
     // Provide your R2 endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
     endpoint: process.env.S3_API!,
