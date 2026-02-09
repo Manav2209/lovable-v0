@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { RedisManager} from "shared-redis"
+import { RedisManager} from "shared-redis";
+
 
 export const redis = RedisManager.getStandardClient();
 
@@ -14,6 +15,7 @@ export async function createTitle(initialPrompt: string) : Promise<string> {
     console.log(response)
     return response.text();
 }
+
 
 
 export function createRandomJobId () {

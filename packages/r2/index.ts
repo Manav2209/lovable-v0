@@ -24,13 +24,15 @@ import {
     type PutObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 
-const s3Config= new S3Client({
+const s3Config= ({
+    region:"auto",
     // Provide your R2 endpoint: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
     endpoint: process.env.S3_API!,
+    forcePathStyle: true, // ✅ VERY IMPORTANT FOR R2
     credentials: {
         // Provide your R2 Access Key ID and Secret Access Key
         accessKeyId: process.env.ACCESS_KEY_ID!,
-        secretAccessKey:process.env.SECRET_ACCESS_KEY! ,
+        secretAccessKey:process.env.SECRET_ACCESS_KEY!,
     },
 });
 
@@ -64,7 +66,9 @@ export async function listObjects(
     params: ListObjectsV2CommandInput,
 ): Promise<ListObjectsV2CommandOutput> {
     const command = new ListObjectsV2Command(params);
+
     const response = await S3.send(command);
+    
     return response;
 }
 
@@ -91,3 +95,4 @@ export async function deleteObject(
     const response = await S3.send(command);
     return response;
 }
+
