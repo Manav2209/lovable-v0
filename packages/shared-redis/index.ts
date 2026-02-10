@@ -1,5 +1,5 @@
 import { createClient } from "redis";
-import type { RedisClientType as RedisType} from "redis";
+import type {  RedisClientType as RedisType} from "redis";
 
 export class RedisManager {
     private static standardClient: RedisType;
@@ -16,14 +16,14 @@ export class RedisManager {
         return this.standardClient;
     }
 
-public static async createSubscriberClient() {
+public static async createSubscriberClient():  Promise<RedisType> {
     const base =  this.getStandardClient();
 
     const sub = base.duplicate();
 
-        sub.on("error", (err: any) => {
+    sub.on("error", (err: any) => {
         console.error("[redis-subscriber]", err);
-        });
+    });
 
     await sub.connect();
     return sub;

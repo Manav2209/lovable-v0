@@ -1,0 +1,17 @@
+{
+  "name": "serve",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev":"bun run ./src/index.ts"
+  },
+  "devDependencies": {
+    "shared-redis":"*",
+    "@types/bun": "latest",
+    "types":"*"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
