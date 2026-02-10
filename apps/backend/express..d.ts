@@ -1,7 +1,10 @@
+import type { ResponseManager } from "./src/lib/responseManager";
 
-declare namespace Express{
-    export interface Request {
-        userId?: string
-    
-     }
-}
+declare global {
+    namespace Express {
+      interface Request {
+        responseManager?: ResponseManager;
+        userId?: string;
+      }
+    }
+  }

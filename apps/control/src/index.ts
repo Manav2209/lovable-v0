@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import {RedisManager} from "shared-redis";
-import { OrchestatorToControl, ControlToServing} from "types";
+import { OrchestatorToControl, ControlToServing, ControlToOrchestator} from "types";
 import { listObjects , getObject} from "r2"
 import fs from "fs"
 import path from 'path';
@@ -38,6 +38,66 @@ function waitForServingConfirmation(
         );
     }
 
+    async function pullTemplatefromR2(projectId: string) {
+        try{
+            // check if template exists
+            const { Contents } = await listObjects({
+                Bucket: bucketName,
+                Prefix: "template/",
+            });
+        
+    
+            if (!Contents || Contents.length === 0) {
+                throw new Error("No template files found in bucket");
+            }
+            // create a shared Dir
+            const sharedDir = process.env.SHARED_DIR || "/app/shared";
+            const projectDir = path.join(sharedDir, projectId);
+        
+            if (!fs.existsSync(sharedDir)) {
+                fs.mkdirSync(sharedDir, { recursive: true });
+            }
+        
+            fs.mkdirSync(projectDir, { recursive: true });
+        
+            for (const obj of Contents) {
+                if (!obj.Key) continue;
+            
+                if (obj.Key === "template/") continue;
+            
+                const relativePath = obj.Key.replace("template/", "");
+            
+                try {
+                    const { Body } = await getObject({
+                    Bucket: bucketName,
+                    Key: obj.Key,
+                    });
+            
+                    const filePath = path.join(projectDir, relativePath);
+            
+                    const fileDir = path.dirname(filePath);
+                    if (!fs.existsSync(fileDir)) {
+                    fs.mkdirSync(fileDir, { recursive: true });
+                    }
+            
+                    const buffer = Buffer.from(
+                    (await Body?.transformToByteArray()) || new Uint8Array(),
+                    );
+                    fs.writeFileSync(filePath, buffer);
+                        } catch (error) {
+                            console.error(`Failed to download ${obj.Key}:`, error);
+                        }
+                    console.log("completed")
+                    return true;
+                    }
+                }catch (error) {
+                    console.error("Error in  pull code from bucket:", error);
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    console.log(errorMessage);
+                    return false;
+            }
+    
+    }
 
 async function ListenOrchestator(){
     console.log("Reading from Orchestator")
@@ -110,69 +170,82 @@ async function ListenOrchestator(){
     }
 }
 
-async function pullTemplatefromR2(projectId: string) {
-    try{
-        // check if template exists
-        const { Contents } = await listObjects({
-            Bucket: bucketName,
-            Prefix: "template/",
-        });
-    
+async function ListenServing() {
+    console.log("[CONTROL] Reading from Serving stream");
+    let lastId =  "0";
 
-        if (!Contents || Contents.length === 0) {
-            throw new Error("No template files found in bucket");
-        }
-        // create a shared Dir
-        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
+    while (true) {
+        const res = await redis.xRead(
+            [{ key: OrchestatorToControl, id: lastId }],
+            { BLOCK: 0 }
+        );
     
-        if (!fs.existsSync(sharedDir)) {
-            fs.mkdirSync(sharedDir, { recursive: true });
-        }
+        if (!res) continue;
     
-        fs.mkdirSync(projectDir, { recursive: true });
+        const messages = res[0]!.messages;
     
-        for (const obj of Contents) {
-            if (!obj.Key) continue;
+        for (const msg of messages) {
+            lastId = msg.id;
         
-            if (obj.Key === "template/") continue;
-        
-            const relativePath = obj.Key.replace("template/", "");
-        
+    
+            const projectId = msg.message.key;
+            const raw = msg.message.value;
+    
+            if (!projectId || !raw) continue;
+    
+            let parsed: any;
             try {
-                const { Body } = await getObject({
-                Bucket: bucketName,
-                Key: obj.Key,
-                });
-        
-                const filePath = path.join(projectDir, relativePath);
-        
-                const fileDir = path.dirname(filePath);
-                if (!fs.existsSync(fileDir)) {
-                fs.mkdirSync(fileDir, { recursive: true });
-                }
-        
-                const buffer = Buffer.from(
-                (await Body?.transformToByteArray()) || new Uint8Array(),
+            parsed = JSON.parse(raw);
+            } catch {
+            console.log("[CONTROL] Invalid JSON from serving:", raw);
+            continue;
+            }
+    
+            console.log(
+            `[CONTROL] SERVING message for ${projectId}:`,
+            parsed.key
+            );
+    
+            switch (parsed.key) {
+            case "PROJECT_INITALIZATION_CONFIRMED": {
+    
+                if (parsed.success) {
+                console.log(
+                    `[CONTROL] Serving confirmed initialization for ${projectId}`
                 );
-                fs.writeFileSync(filePath, buffer);
-                    } catch (error) {
-                        console.error(`Failed to download ${obj.Key}:`, error);
-                    }
-                console.log("completed")
-                return true;
+    
+                await redis.xAdd(ControlToOrchestator, "*", {
+                    key: projectId,
+                    value: "PROJECT_READY",
+                });
+    
+                } else {
+                console.log(
+                    `[CONTROL] Serving failed initialization for ${projectId}`
+                );
+    
+                await redis.xAdd(ControlToOrchestator, "*", {
+                    key: projectId,
+                    value: "PROJECT_FAILED",
+                });
                 }
-            }catch (error) {
-                console.error("Error in  pull code from bucket:", error);
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                console.log(errorMessage);
-                return false;
+    
+                break;
+            }
+    
+            default:
+                console.log(
+                `[CONTROL] Unknown SERVING message for ${projectId}`,
+                parsed.key
+                );
+            }
         }
-
-}
+        }
+    }
 
 async function main() { 
-    ListenOrchestator()
+    ListenOrchestator();
+    ListenServing()
 
 }
 

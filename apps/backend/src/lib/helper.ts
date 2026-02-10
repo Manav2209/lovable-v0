@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { RedisManager} from "shared-redis";
 
-
 export const redis = RedisManager.getStandardClient();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -15,8 +14,6 @@ export async function createTitle(initialPrompt: string) : Promise<string> {
     console.log(response)
     return response.text();
 }
-
-
 
 export function createRandomJobId () {
     return Math.random().toString() + Math.random().toString()

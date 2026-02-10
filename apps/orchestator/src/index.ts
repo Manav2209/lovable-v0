@@ -44,9 +44,6 @@ async function ListenBackend() {
     const messages = response[0]!.messages;
 
         for (const msg of messages) {
-
-            
-        
             lastId = msg.id;
             const  msgfromBackend  = msg.message as ChatMessage
             const type = msgfromBackend.type  as string;
