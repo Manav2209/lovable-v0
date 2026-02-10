@@ -1,24 +1,25 @@
 import { RedisManager } from "shared-redis";
-import { BackendToOrchestator  , OrchestatorToControl , ServingToOrchestator , ControlToOrchestator } from "types";
+import { BackendToOrchestator  , OrchestatorToControl , ServingToOrchestator , ControlToOrchestator, CREATE_PROJECT, PROJECT_BUILD, PROJECT_RUN, PROMPT, OrchestatorToBackend, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, OrchestatorToServing, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, PROMPT_RESPONSE } from "types";
 import { createProjectPod } from "./handler/project";
-import type { ChatMessage, ServingResponse } from "./types";
+import type { BackendPayload, ChatMessage, ControlMessage, ServingMessage} from "./types";
 
 // Redis initalization
 const redis = RedisManager.getStandardClient();
 
 // we will store the response from Control and Server Pod
-const serverResponses = new Map<string , (v: string) => void>();
-const controlResponses = new Map<string , (v: string ) => void>();
+// Project ->  resolver
+const serverResponses = new Map<string , (v: ServingMessage) => void>();
+const controlResponses = new Map<string , (v: ControlMessage ) => void>();
 
 
 function waitForServer(projectId: string) {
-    return new Promise<string>((resolve) => {
+    return new Promise<ServingMessage>((resolve) => {
         serverResponses.set(projectId, resolve);
     });
 }
 
 function waitForControl(projectId: string) {
-    return new Promise<string>((resolve) => {
+    return new Promise<ControlMessage>((resolve) => {
         controlResponses.set(projectId, resolve);
     });
 }
@@ -49,23 +50,28 @@ async function ListenBackend() {
             const type = msgfromBackend.type  as string;
             const payloadRaw = msg.message.payload as string;
 
-            const payload = JSON.parse(payloadRaw);
+            const payload = JSON.parse(payloadRaw) as BackendPayload;
             console.log(payload)
-            const { projectId , jobId , userId} = payload;
+            const { projectId , jobId , prompt, userId} = payload;
             switch(type){
-                case "CREATE_PROJECT":
-                    await createProject(projectId)
+                case CREATE_PROJECT:
+                    createProject(projectId)
                     break;
 
-                case "PROJECT_BUILD":
-                    buildProject()
+                case PROJECT_BUILD:
+                    buildProject(projectId)
                     break;
                     
+                case PROJECT_RUN :
+                    runProject(projectId)
+                    break;
+
+                case PROMPT:
+                    handlePrompt(projectId, prompt!).catch(console.error);
+                    break;
             } 
         }
-        }
-    
-
+    }
 }
 
 async function ListenControlPod() {
@@ -79,6 +85,17 @@ async function ListenControlPod() {
         if (!res) continue;
         console.log(res);
 
+        for (const msg of res[0]!.messages) {
+            lastId = msg.id;
+
+            const data = msg.message as ControlMessage;
+
+            const resolver = controlResponses.get(data.projectId);
+            if (resolver) {
+                resolver(data);
+                controlResponses.delete(data.projectId);
+            }
+        }
     }    
 }
 
@@ -96,21 +113,7 @@ async function ListenServicePod() {
         for( const msg of res[0]?.messages!){
             lastId = msg.id;
 
-            const msgfromService = msg.message as ServingResponse;
-
-            const type = msgfromService.type as string;
-            const projectId = msgfromService.projectId;
-
-            const resolver = serverResponses.get(projectId);
-            if (resolver) {
-                resolver(type);
-                serverResponses.delete(projectId);
-            }
-
-            switch(type) {
-                case "PROJECT_CREATED":
-                    break;
-            }
+            const msgfromService = msg.message
         }
     } 
 
@@ -130,8 +133,93 @@ async function createProject(projectId : string){
     );
     console.log("Message send" , message)
 }
-async function buildProject(){
+async function buildProject(projectId: string){
     console.log("BUILD_PROJECT is being called")
+    await redis.xAdd(OrchestatorToControl, "*", {
+        projectId,
+        type: PROJECT_BUILD
+    });
+    //TODO:  fix this type
+    const response : any = await waitForControl(projectId);
+    
+    if (response.type === PROJECT_BUILD_SUCCESS) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_BUILD_SUCCESS
+        });
+        return;
+    
+    }
+    if (response.type === PROJECT_BUILD_FAILED) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_BUILD_FAILED,
+            payload: response.payload ?? ""
+        });
+        return;
+    }
+    
+    if (response.type === PROJECT_FAILED) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_FAILED,
+            payload: response.payload ?? ""
+        });
+    }
+    
+}
+async function runProject(projectId : string) {
+    await redis.xAdd(OrchestatorToServing, "*", {
+        projectId,
+        type: PROJECT_RUN
+    });
+    
+    const response : any = await waitForServer(projectId);
+    
+    if (response.type === PROJECT_RUN_SUCCESS) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_RUN_SUCCESS
+        });
+        return;
+    }
+    
+    if (response.type === PROJECT_RUN_FAILED) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_RUN_FAILED,
+            payload: response.payload ?? ""
+        });
+        return;
+    }
+    
+    if (response.type === PROJECT_FAILED) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_FAILED,
+            payload: response.payload ?? ""
+        });
+    }
+
+}
+async function handlePrompt( projectId : string , prompt: string) {
+    await redis.xAdd(OrchestatorToControl, "*", {
+        projectId,
+        type: PROMPT,
+        payload: prompt
+    });
+    // fix the type
+    const response : any = await waitForControl(projectId);
+    
+      // control pod returns SSE url
+    if (response.type === PROMPT_RESPONSE) {
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROMPT_RESPONSE,
+            payload: response.payload ?? ""
+        });
+    }
+    
 }
 
 async function main() {
