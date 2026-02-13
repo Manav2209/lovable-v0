@@ -1,7 +1,11 @@
 import { RedisManager } from "shared-redis";
-import { BackendToOrchestator  , OrchestatorToControl , ServingToOrchestator , ControlToOrchestator, CREATE_PROJECT, PROJECT_BUILD, PROJECT_RUN, PROMPT, OrchestatorToBackend, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, OrchestatorToServing, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, PROMPT_RESPONSE } from "types";
+
+import { BackendToOrchestator , OrchestatorToControl , ServingToOrchestator , ControlToOrchestator, CREATE_PROJECT, PROJECT_BUILD, PROJECT_RUN, PROMPT, OrchestatorToBackend, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, OrchestatorToServing, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, PROMPT_RESPONSE, PROJECT_INITIALIZED } from "types";
+
 import { createProjectPod } from "./handler/project";
+
 import type { BackendPayload, ChatMessage, ControlMessage, ServingMessage} from "./types";
+import { toK8sName } from "./lib";
 
 // Redis initalization
 const redis = RedisManager.getStandardClient();
@@ -11,16 +15,25 @@ const redis = RedisManager.getStandardClient();
 const serverResponses = new Map<string , (v: ServingMessage) => void>();
 const controlResponses = new Map<string , (v: ControlMessage ) => void>();
 
-
 function waitForServer(projectId: string) {
-    return new Promise<ServingMessage>((resolve) => {
-        serverResponses.set(projectId, resolve);
-    });
+    return new Promise<ServingMessage>((resolve) => 
+        {
+            serverResponses.set(projectId, resolve); 
+        })
 }
 
-function waitForControl(projectId: string) {
-    return new Promise<ControlMessage>((resolve) => {
-        controlResponses.set(projectId, resolve);
+function waitForControl(projectId: string , timeoutMs = 60_000) {
+    return new Promise<ControlMessage>((resolve , reject) => {
+        const timer = setTimeout(() => {
+            controlResponses.delete(projectId);
+            reject(new Error("Control pod timeout"));
+        }, timeoutMs);
+
+        controlResponses.set(projectId, (value) => {
+            clearTimeout(timer);
+            resolve(value);
+        });
+
     });
 }
 
@@ -99,40 +112,40 @@ async function ListenControlPod() {
     }    
 }
 
-async function ListenServicePod() {
-    let lastId = "$";
-
-    while(true){
-        const res = await redis.xRead(
-            [{ key: ServingToOrchestator, id: lastId }],
-            { BLOCK: 0 }
-        );
-        if (!res) continue;
-        console.log(res);
-
-        for( const msg of res[0]?.messages!){
-            lastId = msg.id;
-
-            const msgfromService = msg.message
-        }
-    } 
-
-}
 
 async function createProject(projectId : string){
-    const id = "proj-"+projectId;
-    await createProjectPod(id);
+    
+    const k8sName = toK8sName(projectId);
+
+    await createProjectPod(k8sName);
+
     console.log("Pod created")
-    const message = await redis.xAdd(
-        OrchestatorToControl,
-        "*",
-        {
-        type:"PROJECT_INITIALIZED",
-        projectId: id
+    const message = await redis.xAdd(OrchestatorToControl,"*",{
+        type:PROJECT_INITIALIZED,
+        projectId: projectId
         }
+
     );
     console.log("Message send" , message)
+    const response = await waitForControl(projectId);
+
+    if (response.type === PROJECT_INITIALIZED && response.success === "true") {
+
+        await redis.xAdd(OrchestatorToBackend, "*", {
+            projectId,
+            type: PROJECT_INITIALIZED
+        });
+        return;
+    }
+
+    await redis.xAdd(OrchestatorToBackend, "*", {
+        projectId,
+        type: PROJECT_FAILED,
+        payload: response.payload ?? "initialization failed"
+    });
 }
+
+
 async function buildProject(projectId: string){
     console.log("BUILD_PROJECT is being called")
     await redis.xAdd(OrchestatorToControl, "*", {
@@ -225,7 +238,6 @@ async function handlePrompt( projectId : string , prompt: string) {
 async function main() {
     ListenBackend()
     ListenControlPod();
-    ListenServicePod()
 }
 
 main().catch(console.error);

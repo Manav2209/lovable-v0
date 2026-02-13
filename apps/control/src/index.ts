@@ -1,28 +1,31 @@
 import 'dotenv/config'
 import {RedisManager} from "shared-redis";
-import { OrchestatorToControl, ControlToServing, ControlToOrchestator} from "types";
+import { OrchestatorToControl, ControlToServing, ControlToOrchestator, ServingToControl, PROJECT_INITIALIZED, PROJECT_BUILD, PROMPT} from "types";
 import { listObjects , getObject} from "r2"
 import fs from "fs"
 import path from 'path';
-
+import type { MessageFromServing } from './types';
 
 const bucketName = process.env.BUCKET_NAME  || "lovable";
 
-
 const redis = RedisManager.getStandardClient();
 
-const inflight = new Set<string>();
 
-const processing = new Map<
-    string,
-    (value: { success: boolean; payload?: string }) => void
->();
+/*  Map -- > {
+    projectId , Promise { 
+        success: string,
+        payload: string
+    }
+
+}*/
+const processing = new Map<string,
+(value: { success: string; payload?: string }) => void>();
 
 function waitForServingConfirmation(
     projectId: string,
     timeoutMs = 60_000,
     ) {
-        return new Promise<{ success: boolean; payload?: string }>(
+        return new Promise<{ success: string; payload?: string }>(
         (resolve, reject) => {
     
             const timer = setTimeout(() => {
@@ -38,7 +41,7 @@ function waitForServingConfirmation(
         );
     }
 
-    async function pullTemplatefromR2(projectId: string) {
+async function pullTemplatefromR2(projectId: string) {
         try{
             // check if template exists
             const { Contents } = await listObjects({
@@ -107,63 +110,64 @@ async function ListenOrchestator(){
             [{ key: OrchestatorToControl, id: lastId }],
             { BLOCK: 0},
         );
-
-    
         if (!res) continue;
-    
         const messages = res[0]!.messages;
-
             for (const msg of messages) {
-                
                 lastId = msg.id;
-                const msgfromOrch = msg.message;
+                const msgfromOrch = msg.message ;
                 console.log("Message:",msgfromOrch)
                 const type = msgfromOrch.type;
                 const projectId = msg.message.projectId!
 
                 switch(type){
-                    case "PROJECT_INITIALIZED": 
-                    if (inflight.has(projectId)) {
-                        console.log("Already inflight:", projectId);
-                        break;
-                    }
-                
-                        inflight.add(projectId);
+                    case PROJECT_INITIALIZED: 
                         try{
                              // pull the template from the R2
-                            await pullTemplatefromR2(projectId);
+                            const ok = await pullTemplatefromR2(projectId);
+                            if(!ok) {
+                                throw new Error("template pull")
+                            }
 
-                    // Pushing initalization to serving Pod
-                            await redis.xAdd(
-                                ControlToServing,
-                                "*",
-                                {
+                            // Pushing initalization to serving Pod
+                            await redis.xAdd(ControlToServing,"*", {
                                 projectId,
-                                type: "PROJECT_INITIALIZED",
-                                },
+                                type: PROJECT_INITIALIZED,
+                                }
                             )
-                    // Waiting for Response from Serving Pod
-                        const result =
-                        await waitForServingConfirmation(projectId);
-        
-                        if (!result.success) {
-                            throw new Error(result.payload || "Serving failed");
-                        }
-                            console.log(
-                                `[${projectId}] initialization done`,
-                            );
+                            // Waiting for Response from Serving Pod
+                            const result =
+                            await waitForServingConfirmation(projectId);
+            
+                            if (result.success !== "true") {
+                                throw new Error(result.payload || "Serving failed");
+                            }
+                            console.log(`[${projectId}] initialization done`);
+
+                            await redis.xAdd(ControlToOrchestator, "*", {
+                                projectId,
+                                type: PROJECT_INITIALIZED,
+                                success: "true",
+                            });
 
                         }catch(e){
-                            console.error(
-                                `[${projectId}] initialization failed`,
-                                e
-                            );
-                        } finally {
-                            inflight.delete(projectId);
-                        }
+                            console.error(`[${projectId}] initialization failed`,e);
 
+                            await redis.xAdd(ControlToOrchestator, "*", {
+                                projectId,
+                                type: PROJECT_INITIALIZED,
+                                success: "false",
+                                payload: String(e),
+                            });
+                        } 
+                        break;
 
-                    break;
+                    case PROJECT_BUILD:
+
+                        break;
+                        
+                    case PROMPT:
+                        break;
+
                 }
             }
         
@@ -176,7 +180,7 @@ async function ListenServing() {
 
     while (true) {
         const res = await redis.xRead(
-            [{ key: OrchestatorToControl, id: lastId }],
+            [{ key: ServingToControl, id: lastId }],
             { BLOCK: 0 }
         );
     
@@ -187,61 +191,28 @@ async function ListenServing() {
         for (const msg of messages) {
             lastId = msg.id;
         
-    
-            const projectId = msg.message.key;
-            const raw = msg.message.value;
-    
-            if (!projectId || !raw) continue;
-    
-            let parsed: any;
-            try {
-            parsed = JSON.parse(raw);
-            } catch {
-            console.log("[CONTROL] Invalid JSON from serving:", raw);
-            continue;
-            }
-    
-            console.log(
-            `[CONTROL] SERVING message for ${projectId}:`,
-            parsed.key
-            );
-    
-            switch (parsed.key) {
-            case "PROJECT_INITALIZATION_CONFIRMED": {
-    
-                if (parsed.success) {
-                console.log(
-                    `[CONTROL] Serving confirmed initialization for ${projectId}`
-                );
-    
-                await redis.xAdd(ControlToOrchestator, "*", {
-                    key: projectId,
-                    value: "PROJECT_READY",
-                });
-    
-                } else {
-                console.log(
-                    `[CONTROL] Serving failed initialization for ${projectId}`
-                );
-    
-                await redis.xAdd(ControlToOrchestator, "*", {
-                    key: projectId,
-                    value: "PROJECT_FAILED",
-                });
-                }
-    
+            const streamMsg = msg.message as MessageFromServing;
+            console.log(streamMsg)
+            const type = streamMsg.type;
+            const projectId = streamMsg.projectId;
+        
+            switch(type) {
+                case PROJECT_INITIALIZED :
+                    if (!projectId) continue;
+                    const resolver = processing.get(projectId);
+                    if (!resolver) continue;
+                    resolver({
+                        success: streamMsg.success,
+                        payload: streamMsg.payload
+                    });
+
+                    processing.delete(projectId);
                 break;
             }
-    
-            default:
-                console.log(
-                `[CONTROL] Unknown SERVING message for ${projectId}`,
-                parsed.key
-                );
-            }
-        }
         }
     }
+}
+    
 
 async function main() { 
     ListenOrchestator();

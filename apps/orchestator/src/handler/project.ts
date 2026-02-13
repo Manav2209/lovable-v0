@@ -8,7 +8,7 @@ const coreApi = kc.makeApiClient(k8s.CoreV1Api);
 
 export async function createProjectPod(projectId: string) {
     const namespace = "default";
-    const name = "pod-" + projectId.toLowerCase();
+    const name = "pod-" + projectId;
 
     const deployment: k8s.V1Deployment = {
         apiVersion: "apps/v1",

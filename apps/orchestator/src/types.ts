@@ -13,6 +13,7 @@ export type BackendPayload = {
 };
 
 export type ControlMessage = {
+    success: string
     projectId: string;
     type: string;
     payload?: string;

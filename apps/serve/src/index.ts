@@ -1,5 +1,7 @@
 import {RedisManager} from "shared-redis";
-import { ControlToServing , ServingToOrchestator , OrchestatorToServing  ,ServingToControl} from "types"
+import { ControlToServing , ServingToOrchestator , OrchestatorToServing  ,ServingToControl, PROJECT_BUILD, PROJECT_INITIALIZED, PROJECT_RUN} from "types"
+import path from "path";
+import fs from "fs"
 
 
 export const redis = RedisManager.getStandardClient();
@@ -28,49 +30,41 @@ async function ListenControl(){
 
 
             switch(type){
-                case "PROJECT_INITIALIZED" :
+                case PROJECT_INITIALIZED :
                     try{
-                        //send to Control -- > INITALIZATION_CONFIRMED ;
-                        await redis.xAdd(ServingToControl, "*", {
-                            key: projectId!,
-                            value: JSON.stringify({
-                                type: "PROJECT_INITALIZATION_CONFIRMED",
-                                success: true,
-                                payload: JSON.stringify({ projectId }),
-                            }),
-                        });
+                        const sharedDir = process.env.SHARED_DIR || "/app/shared";
+                        const projectDir = path.join(sharedDir , projectId!)
 
-                        //send to Orchestator -- > PROJECT_CREATED;
-                        await redis.xAdd(ServingToOrchestator , "*" , {
-                            key:projectId!, 
-                            value:JSON.stringify({
-                                type:"PROJECT_CREATED",
-                                projectId: projectId
-                            })
-                        })
+                        // server checking 
+                        if (!fs.existsSync(projectDir)) {
+                            throw new Error("project workspace not found");
+                        }
+
+                        const files = fs.readdirSync(projectDir);
+                        if (files.length === 0) {
+                        throw new Error("project workspace is empty");
+                        }
+                        //send to Control Ack ;
+                        await redis.xAdd(ServingToControl, "*", {
+                                type: PROJECT_INITIALIZED,
+                                success: "true",
+                                projectId : projectId!,
+                            
+                        });
 
                     }catch(error){
                         const errorMessage =
-                            error instanceof Error ? error.message : String(error);
+                        error instanceof Error ? error.message : String(error);
 
                         await redis.xAdd(ServingToControl, "*", {
-                            key: projectId!,
-                            value: JSON.stringify({
-                                key: "PROJECT_INITALIZATION_CONFIRMED",
-                                success: false,
-                                payload: JSON.stringify({ error: errorMessage }),
-                            }),
-                            });
-
-                            await redis.xAdd(ServingToOrchestator, "*", {
-                            key: projectId!,
-                            value: "PROJECT_FAILED",
-                            });
+                            type: PROJECT_INITIALIZED,
+                            success: "false",
+                            payload: errorMessage,
+                            projectId: projectId!
+                        });
                         }
-                    }
                     break;
             }
-            
     }
     
 }
@@ -90,8 +84,16 @@ async function ListenOrchestator() {
         
         for(const msg of messages){
             lastId = msg.id;
-            const msgFromOrch = msg.message;
+            const msgFromOrch = msg.message ;
+            const type = msgFromOrch.type;
+            const projectId = msgFromOrch.projectId ;
+
+            switch(type){
+                case PROJECT_RUN:
+                    break;
+            }
         }
+    }
     }
 }
 async function main() {
@@ -102,3 +104,4 @@ async function main() {
 }
 
 main()
+
