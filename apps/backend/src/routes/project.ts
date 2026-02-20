@@ -69,7 +69,7 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             });
         }
 
-      // Trigger RUN
+        // Trigger RUN
         await redis.xAdd(BackendToOrchestator, "*", {
             type: PROJECT_RUN,
             payload: JSON.stringify({

@@ -147,7 +147,8 @@ async function createProject(projectId : string){
 
 
 async function buildProject(projectId: string){
-    console.log("BUILD_PROJECT is being called")
+    console.log("BUILD_PROJECT is being called");
+    
     await redis.xAdd(OrchestatorToControl, "*", {
         projectId,
         type: PROJECT_BUILD
@@ -161,8 +162,8 @@ async function buildProject(projectId: string){
             type: PROJECT_BUILD_SUCCESS
         });
         return;
-    
     }
+
     if (response.type === PROJECT_BUILD_FAILED) {
         await redis.xAdd(OrchestatorToBackend, "*", {
             projectId,
@@ -179,8 +180,9 @@ async function buildProject(projectId: string){
             payload: response.payload ?? ""
         });
     }
-    
+
 }
+
 async function runProject(projectId : string) {
     await redis.xAdd(OrchestatorToServing, "*", {
         projectId,
@@ -215,6 +217,7 @@ async function runProject(projectId : string) {
     }
 
 }
+
 async function handlePrompt( projectId : string , prompt: string) {
     await redis.xAdd(OrchestatorToControl, "*", {
         projectId,
