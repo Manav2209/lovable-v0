@@ -121,8 +121,10 @@ async function createProject(projectId : string){
 
     console.log("Pod created")
     const message = await redis.xAdd(OrchestatorToControl,"*",{
-        type:PROJECT_INITIALIZED,
-        projectId: projectId
+        data: JSON.stringify({
+            type: PROJECT_INITIALIZED,
+            projectId
+        })
         }
 
     );
@@ -132,52 +134,68 @@ async function createProject(projectId : string){
     if (response.type === PROJECT_INITIALIZED && response.success === "true") {
 
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_INITIALIZED
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_INITIALIZED
+            })
         });
         return;
     }
 
     await redis.xAdd(OrchestatorToBackend, "*", {
-        projectId,
-        type: PROJECT_FAILED,
-        payload: response.payload ?? "initialization failed"
+        data: JSON.stringify({
+            projectId,
+            type: PROJECT_FAILED,
+            payload:
+                response.payload ??
+                "initialization failed"
+        })
     });
 }
-
 
 async function buildProject(projectId: string){
     console.log("BUILD_PROJECT is being called");
     
     await redis.xAdd(OrchestatorToControl, "*", {
-        projectId,
-        type: PROJECT_BUILD
+        data: JSON.stringify({
+            projectId,
+            type: PROJECT_BUILD
+        })
+
     });
     //TODO:  fix this type
     const response : any = await waitForControl(projectId);
     
     if (response.type === PROJECT_BUILD_SUCCESS) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_BUILD_SUCCESS
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_BUILD_SUCCESS
+            })
         });
         return;
     }
 
     if (response.type === PROJECT_BUILD_FAILED) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_BUILD_FAILED,
-            payload: response.payload ?? ""
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_BUILD_FAILED,
+                payload:
+                    response.payload ?? ""
+            })
         });
         return;
     }
     
     if (response.type === PROJECT_FAILED) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_FAILED,
-            payload: response.payload ?? ""
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_FAILED,
+                payload:
+                    response.payload ?? ""
+            })
         });
     }
 
@@ -185,34 +203,44 @@ async function buildProject(projectId: string){
 
 async function runProject(projectId : string) {
     await redis.xAdd(OrchestatorToServing, "*", {
-        projectId,
-        type: PROJECT_RUN
+        data: JSON.stringify({
+            projectId,
+            type: PROJECT_RUN
+        })
     });
     
     const response : any = await waitForServer(projectId);
     
     if (response.type === PROJECT_RUN_SUCCESS) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_RUN_SUCCESS
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_RUN_SUCCESS
+            })
         });
         return;
     }
     
     if (response.type === PROJECT_RUN_FAILED) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_RUN_FAILED,
-            payload: response.payload ?? ""
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_RUN_FAILED,
+                payload:
+                    response.payload ?? ""
+            })
         });
         return;
     }
     
     if (response.type === PROJECT_FAILED) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROJECT_FAILED,
-            payload: response.payload ?? ""
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_FAILED,
+                payload:
+                    response.payload ?? ""
+            })
         });
     }
 
@@ -220,9 +248,11 @@ async function runProject(projectId : string) {
 
 async function handlePrompt( projectId : string , prompt: string) {
     await redis.xAdd(OrchestatorToControl, "*", {
-        projectId,
-        type: PROMPT,
-        payload: prompt
+        data: JSON.stringify({
+            projectId,
+            type: PROMPT,
+            payload: prompt
+        })
     });
     // fix the type
     const response : any = await waitForControl(projectId);
@@ -230,9 +260,13 @@ async function handlePrompt( projectId : string , prompt: string) {
       // control pod returns SSE url
     if (response.type === PROMPT_RESPONSE) {
         await redis.xAdd(OrchestatorToBackend, "*", {
-            projectId,
-            type: PROMPT_RESPONSE,
-            payload: response.payload ?? ""
+            data: JSON.stringify({
+                projectId,
+                type: PROMPT_RESPONSE,
+                payload:
+                    response.payload ?? ""
+            })
+
         });
     }
     

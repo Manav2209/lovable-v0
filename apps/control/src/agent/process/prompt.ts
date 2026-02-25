@@ -25,8 +25,10 @@ export async function processPrompt(
     });
 
     await redis.xAdd(ControlToOrchestator , "*" , {
+      value : JSON.stringify({
         key: projectId,
-          value: PROMPT_RESPONSE + "|" + getProjectSSEUrl(clientIdUsed),
+        value: PROMPT_RESPONSE + "|" + getProjectSSEUrl(clientIdUsed),
+      })
 
     })
     console.log(`Sent SSE URL to orchestrator for project ${projectId}: ${getProjectSSEUrl(clientIdUsed)}`);
@@ -70,20 +72,7 @@ export async function processPrompt(
         })
         console.log(`Agent completed successfully for project ${projectId}`);
 
-      // if (finalState.context?.metadata?.buildStatus === "success") {
-      //   await producer.send({
-      //     topic: TOPIC.CONTROL_TO_SERVING,
-      //     messages: [
-      //       {
-      //         key: projectId,
-      //         value: JSON.stringify({
-      //           key: MESSAGE_KEYS.PROJECT_RUN,
-      //           projectId,
-      //         }),
-      //       },
-      //     ],
-      //   });
-      // }
+  
     } else {
       sendSSEMessage(clientIdUsed, {
         type: "error",

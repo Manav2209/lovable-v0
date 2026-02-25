@@ -5,6 +5,8 @@ import { listObjects , getObject} from "r2"
 import fs from "fs"
 import path from 'path';
 import type { MessageFromServing } from './types';
+import { buildProjectAndNotifyToRun } from './agent/tool/code/buildSource';
+import { processPrompt } from './agent';
 
 const bucketName = process.env.BUCKET_NAME  || "lovable";
 
@@ -16,7 +18,6 @@ export const redis = RedisManager.getStandardClient();
         success: string,
         payload: string
     }
-
 }*/
 const processing = new Map<string,
 (value: { success: string; payload?: string }) => void>();
@@ -114,11 +115,25 @@ async function ListenOrchestator(){
         const messages = res[0]!.messages;
             for (const msg of messages) {
                 lastId = msg.id;
-                const msgfromOrch = msg.message ;
-                console.log("Message:",msgfromOrch)
-                const type = msgfromOrch.type;
-                const projectId = msg.message.projectId!
-
+                const raw = msg.message?.data;
+                if (!raw) {
+                    console.log("Invalid message (missing data field)");
+                    continue;
+                }
+                let parsed:any;
+                try {
+                    parsed = JSON.parse(raw);
+                } catch (err) {
+                    console.error("Failed parsing orchestrator msg:",raw);
+                    continue;
+                }
+                console.log("Message:", parsed);
+                const type = parsed.type;
+                const projectId = parsed.projectId;
+                if (!projectId) {
+                    console.log("Missing projectId");
+                    continue;
+                }
                 switch(type){
                     case PROJECT_INITIALIZED: 
                         try{
@@ -130,8 +145,10 @@ async function ListenOrchestator(){
 
                             // Pushing initalization to serving Pod
                             await redis.xAdd(ControlToServing,"*", {
-                                projectId,
-                                type: PROJECT_INITIALIZED,
+                                data: JSON.stringify({
+                                    projectId,
+                                    type:PROJECT_INITIALIZED
+                                })
                                 }
                             )
                             // Waiting for Response from Serving Pod
@@ -144,30 +161,51 @@ async function ListenOrchestator(){
                             console.log(`[${projectId}] initialization done`);
 
                             await redis.xAdd(ControlToOrchestator, "*", {
-                                projectId,
-                                type: PROJECT_INITIALIZED,
-                                success: "true",
+                                value: JSON.stringify({
+                                    projectId,
+                                    type: PROJECT_INITIALIZED,
+                                    success: "true"
+                                })
                             });
 
                         }catch(e){
                             console.error(`[${projectId}] initialization failed`,e);
 
                             await redis.xAdd(ControlToOrchestator, "*", {
-                                projectId,
-                                type: PROJECT_INITIALIZED,
-                                success: "false",
-                                payload: String(e),
+                                value: JSON.stringify( {
+                                    projectId,
+                                    type: PROJECT_INITIALIZED,
+                                    success: "false",
+                                    payload: String(e),
+                                })
+
                             });
                         } 
                         break;
 
                     case PROJECT_BUILD:
-                        
+                            const buildResultSuccess = await buildProjectAndNotifyToRun(projectId);
+                            buildResultSuccess ? console.log(`Project ${projectId} built successfully.`)
+                            : console.log(`Project ${projectId} build failed.`);
                         break;
                         
-                    case PROMPT:
+                    case PROMPT :
+                        const prompt = parsed.payload;
+
+                    if (!prompt) {
+                        console.log("Prompt missing payload");
+                        break;
+                    }
+                    try {
+                        await processPrompt(projectId,prompt);
+                    } catch (err) {
+                        console.error("Prompt failed",err);
+                    }
                         break;
 
+                    default:
+                        console.log("Unknown type:",type);
+                        break;
                 }
             }
         
@@ -207,6 +245,10 @@ async function ListenServing() {
                     });
 
                     processing.delete(projectId);
+                break;
+                
+                default :
+                    console.log(`Received unknown message: ${type} for project: ${projectId} from SERVING_TO_CONTROL`);
                 break;
             }
         }

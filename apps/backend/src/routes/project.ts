@@ -2,7 +2,6 @@ import { Router } from "express";
 import { createRandomJobId, createTitle, redis } from "../lib/helper";
 import { BackendToOrchestator, PROJECT_BUILD, PROJECT_BUILD_FAILED, PROJECT_RUN, PROJECT_RUN_SUCCESS } from "types";
 import { authMiddleware } from "../middleware";
-import { conversationSchema, createProjectSchema } from "../lib/schema";
 import { db } from "database";
 import { eq, and, desc, asc } from "drizzle-orm";
 
@@ -58,32 +57,37 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
     });
 
     try {
-        const buildResponse =
-            await req.responseManager!.wait(projectId, 30_000);
+        const buildRes = await req.responseManager!.wait(projectId, 30_000);
+        const buildResponse  = JSON.parse(buildRes)
 
         if (buildResponse.type === PROJECT_BUILD_FAILED) {
+
             return res.status(500).json({
-            success: false,
-            data: null,
-            error: buildResponse.error ?? "BUILD_FAILED"
-            });
+                success: false,
+                data: null,
+                error: buildResponse.error ?? "BUILD_FAILED"
+                });
+
         }
 
         // Trigger RUN
         await redis.xAdd(BackendToOrchestator, "*", {
             type: PROJECT_RUN,
             payload: JSON.stringify({
-                projectId,
+                projectId, 
                 jobId,
                 userId: req.userId!
             })
         });
 
-        const runResponse =
+        const runRes =
             await req.responseManager!.wait(projectId, 30_000);
+        
+            const runResponse= JSON.parse(runRes)
 
         if (runResponse.type === PROJECT_RUN_SUCCESS) {
-            return res.status(200).json({
+            
+            return res.status(400).json({
             success: true,
             data: {
                 url: `${projectId}.localhost:3000`
@@ -91,12 +95,13 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             error: null
             });
         }
-
+    
         return res.status(500).json({
             success: false,
             data: null,
             error: runResponse.error ?? "RUN_FAILED"
         });
+        return res
 
     } catch {
         return res.status(504).json({
@@ -142,8 +147,9 @@ projectRouter.post( "/project/:projectId/build", authMiddleware,async (req, res)
     });
 
     try {
-        const buildResponse =
+        const buildRes =
             await req.responseManager!.wait(projectId, 30_000);
+        const buildResponse = JSON.parse(buildRes)
 
         if (buildResponse.type === "PROJECT_BUILD_SUCCESS") {
             return res.status(200).json({
