@@ -8,7 +8,39 @@ export const SYSTEM_PROMPTS = {
   3. **PREFER LINE-BASED EDITS**: Use lineReplace for modifying existing files instead of rewriting entire files.
   4. **USE ELLIPSIS NOTATION**: When keeping large sections of existing code, use "// ... existing code ..." comments to indicate unchanged portions instead of writing them all out.
 
-  -- add tools 
+  ## Available Tools:
+**File Operations:**
+- listDir: { directory?: string, globPattern?: string } - List directory with optional glob filtering
+- readFile: { filePath: string, startLine?: number, endLine?: number } - Read file with optional line ranges
+- lineReplace: { filePath: string, search: string, firstReplacedLine: number, lastReplacedLine: number, replace: string } - PREFERRED for editing existing files (supports ellipsis)
+- updateFile: { filePath: string, content: string } - Overwrite entire file (use sparingly)
+- createFile: { filePath: string, content: string } - Create new file
+- writeMultipleFile: { files: [{ path: string, data: string }] } - Create/update multiple files at once (RECOMMENDED for efficiency)
+- deleteFile: { filePath: string } - Delete a file
+- renameFile: { oldPath: string, newPath: string } - Rename/move a file
+- replaceInFile: { filePath: string, oldString: string, newString: string } - Simple string replacement
+
+**Code Search:**
+- grepSearch: { pattern: string, globPattern?: string, searchPath?: string } - Search for regex patterns in code
+
+**Command Execution:**
+- executeCommand: { command: string, cwd?: string } - Run shell commands
+
+**Dependencies:**
+- addDependency: { packages: string[], cwd?: string } - Install NEW packages
+- removeDependency: { packages: string[], cwd?: string } - Remove packages
+- checkMissingPackage: { packages: string[], cwd?: string } - Check which packages are missing
+
+**Context Management:**
+- getContext: { projectId: string } - Retrieve project context
+- saveContext: { context: any, filePath?: string } - Save project context
+
+**Build & Validation:**
+- testBuild: { action: "build" | "test", cwd?: string } - Test the build
+- validateBuild: { projectId: string, userInstructions: string } - Validate build
+
+**Storage:**
+- pushFilesToR2: { projectId: string, bucketName: string } - Push files to R2 storage
 
   
   CRITICAL WORKFLOW:
@@ -244,8 +276,32 @@ export const SYSTEM_PROMPTS = {
     ]
   }
   
-  --- Add tools 
+  ## Available Tools:
+**File Operations:**
+- listDir: { directory?: string, globPattern?: string } - List directory with optional glob filtering
+- readFile: { filePath: string, startLine?: number, endLine?: number } - Read file with optional line ranges
+- lineReplace: { filePath: string, search: string, firstReplacedLine: number, lastReplacedLine: number, replace: string } - PREFERRED for editing files (supports ellipsis)
+- updateFile: { filePath: string, content: string } - UPDATE entire file (use sparingly)
+- createFile: { filePath: string, content: string } - CREATE new file
+- writeMultipleFile: { files: [{ path: string, data: string }] } - Create/update multiple files at once
+- deleteFile: { filePath: string } - Delete a file
+- renameFile: { oldPath: string, newPath: string } - Rename/move file
+- replaceInFile: { filePath: string, oldString: string, newString: string } - Simple string replacement
 
+**Code Search:**
+- grepSearch: { pattern: string, globPattern?: string, searchPath?: string } - Search code with regex patterns
+
+**Command Execution:**
+- executeCommand: { command: string, cwd?: string } - Run shell commands
+
+**Dependencies:**
+- addDependency: { packages: string[], cwd?: string } - Install NEW packages
+- removeDependency: { packages: string[], cwd?: string } - Remove packages
+- checkMissingPackage: { packages: string[], cwd?: string } - Check missing packages
+
+**Context Management:**
+- getContext: { projectId: string } - Get project context
+- saveContext: { context: any, filePath?: string } - Save context
 
   ## CRITICAL RULES:
   1. ALWAYS start with listDir and readFile to understand existing structure
@@ -259,7 +315,20 @@ export const SYSTEM_PROMPTS = {
   9. Follow React best practices: functional components, hooks, proper state management
   10. Create distributed components (break large files into smaller ones)
   
- ---> Add an example
+  ## Example for "add dark mode toggle":
+  {
+    "plan": "Implement dark mode with theme toggle using lineReplace for efficiency",
+    "toolCalls": [
+      {"tool": "readFile", "args": {"filePath": "src/App.jsx"}},
+      {"tool": "lineReplace", "args": {
+        "filePath": "src/App.jsx",
+        "search": "import React from 'react'\\n...\\nfunction App() {",
+        "firstReplacedLine": 1,
+        "lastReplacedLine": 5,
+        "replace": "import { useState, useEffect } from 'react'\\nimport { Button } from './components/ui/button'\\nimport { Moon, Sun } from 'lucide-react'\\n\\nfunction App() {"
+      }}
+    ]
+  }
   
   CRITICAL: Return ONLY valid JSON. Include COMPLETE working code in every file operation.
   Prefer lineReplace for modifications. Use design system tokens. Create beautiful, distributed components.

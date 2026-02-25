@@ -3,7 +3,8 @@ import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
 import { glob } from "glob";
-import { IGNORE_PATTERNS } from "../..";
+import { IGNORE_PATTERNS } from "./getContext";
+
 
 
 const listDirInput = z.object({

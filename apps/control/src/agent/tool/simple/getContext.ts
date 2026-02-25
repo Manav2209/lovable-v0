@@ -1,0 +1,236 @@
+
+
+import fs from "fs";
+import { tool } from "langchain";
+import path from "path";
+import * as z from "zod";
+import { sendSSEMessage } from "../../../sse";
+import type { WorkflowState } from "../../graphs/workflow";
+
+export const IGNORE_PATTERNS = [
+  'node_modules',
+  '.turbo',
+  'dist',
+  'dist-ssr',
+  'build',
+  'out',
+  'coverage',
+  '.nyc_output',
+  '.cache',
+  'tmp',
+  'temp',
+  '.git',
+  '.env',
+  '.env.local',
+  '.env.development.local',
+  '.env.test.local',
+  '.env.production.local',
+  '.DS_Store',
+  '*.log',
+  '*.tsbuildinfo',
+  '*.tgz',
+  '.vscode',
+  '.idea',
+  '*.swp',
+  '*.swo',
+  'logs',
+  '.pnp',
+  '.pnp.js',
+  '*.local',
+  'bun.lockb',
+  ".next",
+  "next",
+  ".nx",
+  "nx",
+];
+
+function shouldIgnoreFile(filePath: string): boolean {
+    const normalizedPath = filePath.replace(/\\/g, '/');
+
+    return IGNORE_PATTERNS.some(pattern => {
+        if (pattern.includes('*')) {
+        const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+        return regex.test(normalizedPath);
+        }
+        return normalizedPath.includes(pattern);
+    });
+}
+
+const getContextInput = z.object({
+  projectId: z.string(),
+  previousContext: z.any().optional(),
+});
+
+export const getContext = tool(
+  async (input: z.infer<typeof getContextInput>) => {
+    const { projectId, previousContext } = getContextInput.parse(input);
+    const sharedDir = process.env.SHARED_DIR || "/app/shared";
+    const projectDir = path.join(sharedDir, projectId);
+
+    const context: Record<string, any> = {
+      projectId,
+      projectPath: projectDir,
+      baseTemplate: {
+        exists: false,
+        description: "React 19 + JavaScript + Bun + Tailwind CSS v4 + shadcn/ui base template",
+        features: [
+          "React 19 with JavaScript",
+          "Bun runtime and package manager",
+          "Tailwind CSS v4 (latest)",
+          "shadcn/ui components (Button, Card, Input, Label, Textarea)",
+          "Lucide React icons",
+          "Hot reload enabled",
+          "Pre-configured build system"
+        ],
+        availableComponents: [
+          "@/components/ui/button - Button component",
+          "@/components/ui/card - Card component",
+          "@/components/ui/input - Input component",
+          "@/components/ui/label - Label component",
+          "@/components/ui/textarea - Textarea component"
+        ],
+        utilities: [
+          "@/lib/utils - cn() function for class merging"
+        ]
+      },
+      fileStructure: {},
+      dependencies: [],
+      currentFiles: {},
+      fileLastModified: {},
+      metadata: {
+        lastModified: new Date().toISOString(),
+        totalFiles: 0,
+        buildStatus: "pending",
+      },
+    };
+
+    if (previousContext) {
+      context.currentFiles = { ...previousContext.currentFiles };
+      context.fileLastModified = { ...previousContext.fileLastModified };
+      context.dependencies = [...(previousContext.dependencies || [])];
+      context.devDependencies = [...(previousContext.devDependencies || [])];
+      context.scripts = { ...previousContext.scripts };
+      context.baseTemplate = { ...previousContext.baseTemplate };
+    }
+
+    if (previousContext?.lastExecution?.summary) {
+      return {
+        context: {
+          projectId,
+          projectPath: projectDir,
+          metadata: previousContext.metadata,
+          lastExecution: previousContext.lastExecution,
+          currentFiles: {},
+          baseTemplate: previousContext.baseTemplate,
+          dependencies: previousContext.dependencies,
+          devDependencies: previousContext.devDependencies,
+          scripts: previousContext.scripts,
+          fileStructure: previousContext.fileStructure
+        }
+      };
+    }
+
+    try {
+      if (fs.existsSync(projectDir)) {
+        context.baseTemplate.exists = true;
+
+        const files = fs.readdirSync(projectDir, { recursive: true });
+        const fileList = files
+          .map((file: any) => typeof file === 'string' ? file : file.toString())
+          .filter((file: string) => !shouldIgnoreFile(file));
+
+        context.metadata.totalFiles = fileList.length;
+
+        context.fileStructure = {
+          root: projectDir,
+          files: fileList.slice(0, 100),
+          hasMore: fileList.length > 100
+        };
+
+        const keyFiles = [
+          "package.json",
+          "src/App.jsx",
+          "src/index.jsx",
+          "src/index.js",
+          "src/index.css",
+          "src/lib/utils.js",
+          "components.json"
+        ];
+
+        for (const file of keyFiles) {
+          const filePath = path.join(projectDir, file);
+          if (fs.existsSync(filePath)) {
+            const stats = fs.statSync(filePath);
+            const mtime = stats.mtimeMs;
+
+            if (file !== "package.json" &&
+              context.currentFiles[file] &&
+              context.fileLastModified?.[file] === mtime) {
+              continue;
+            }
+
+            const content = fs.readFileSync(filePath, "utf8");
+            if (content.length > 10000) {
+              context.currentFiles[file] = content.slice(0, 10000) + "\n\n... [truncated]";
+            } else {
+              context.currentFiles[file] = content;
+            }
+
+            context.fileLastModified[file] = mtime;
+          }
+        }
+
+        const componentsUiDir = path.join(projectDir, "src/components/ui");
+        if (fs.existsSync(componentsUiDir)) {
+          const uiComponents = fs.readdirSync(componentsUiDir)
+            .filter(file => file.endsWith('.jsx'))
+            .map(file => file.replace('.jsx', ''));
+          context.baseTemplate.installedComponents = uiComponents;
+        }
+
+        const packagePath = path.join(projectDir, "package.json");
+        if (fs.existsSync(packagePath)) {
+          const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+          context.dependencies = Object.keys(packageJson.dependencies || {});
+          context.devDependencies = Object.keys(packageJson.devDependencies || {});
+          context.scripts = packageJson.scripts || {};
+        }
+      } else {
+        context.error = "Project directory does not exist at " + projectDir;
+        context.metadata.buildStatus = "missing";
+      }
+    } catch (error) {
+      context.error = `Error getting context: ${(error as Error).message}`;
+    }
+
+    return { context };
+  },
+  {
+    name: "getContext",
+    description:
+      "Retrieves project context including file structure, dependencies, and key files. Can optionally accept previousContext to avoid re-reading unchanged files.",
+    schema: getContextInput,
+  },
+);
+
+
+export async function getContextNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+  sendSSEMessage(state.clientId, {
+    type: "loading_context",
+    message: "Loading project context...",
+  });
+
+  const result = await getContext.invoke({
+    projectId: state.projectId,
+    previousContext: state.context
+  });
+
+  if (result.context?.baseTemplate?.exists) {
+    sendSSEMessage(state.clientId, {
+      type: "context_loaded",
+      message: `Context loaded: ${result.context.metadata.totalFiles} files`,
+    });
+  }
+
+  return { context: result.context };
+}

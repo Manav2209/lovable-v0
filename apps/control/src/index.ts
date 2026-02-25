@@ -8,7 +8,7 @@ import type { MessageFromServing } from './types';
 
 const bucketName = process.env.BUCKET_NAME  || "lovable";
 
-const redis = RedisManager.getStandardClient();
+export const redis = RedisManager.getStandardClient();
 
 
 /*  Map -- > {
