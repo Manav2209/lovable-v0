@@ -1,10 +1,12 @@
 import {RedisManager} from "shared-redis";
-import { ControlToServing , ServingToOrchestator , OrchestatorToServing  ,ServingToControl, PROJECT_BUILD, PROJECT_INITIALIZED, PROJECT_RUN} from "types"
+import { ControlToServing , OrchestatorToServing  ,ServingToControl, PROJECT_INITIALIZED, PROJECT_RUN} from "types"
 import path from "path";
 import fs from "fs"
+import { checkIfProjectFilesExist, serveTheProject } from "./lib/helper";
 
 
 export const redis = RedisManager.getStandardClient();
+export let projectRunning = false;
 
 async function ListenControl(){
 
@@ -64,12 +66,28 @@ async function ListenControl(){
                         });
                         }
                     break;
+                
+                case PROJECT_RUN:
+                    if(projectId){
+                        if(!checkIfProjectFilesExist(projectId)) return ;
+                        await serveTheProject(projectId);
+                        console.log(`Project ${projectId} is now running.`);
+                        projectRunning = true;
+                    }
+                    break;
+                    
+                default:
+                        console.log(
+                            `Received unknown message: ${type}} for project: ${projectId} from control pod`,
+                        );
+                        break;
             }
     }
     
 }
+}
 
-async function ListenOrchestator() {
+async function ListenOrchestator () {
     console.log("Reading from Orchestator Stream")
     let lastId = "0";
 
@@ -90,18 +108,32 @@ async function ListenOrchestator() {
 
             switch(type){
                 case PROJECT_RUN:
+                    if(projectId){
+                        if(!checkIfProjectFilesExist(projectId)) return ;
+                        await serveTheProject(projectId);
+                        console.log(`Project ${projectId} is now running.`);
+                        projectRunning = true;
+                    }
+                    break;
+                default:
+                    console.log(
+                        `Received unknown message: ${type}} for project: ${projectId} from control pod`,
+                    );
                     break;
             }
         }
     }
-    }
 }
+
 async function main() {
-
-    console.log("Serving Pod Started");
-
-    ListenControl();
+    console.log("Serving POD Started");
+    await Promise.all([
+        ListenControl(),
+        ListenOrchestator()
+    ]);
 }
 
 main()
+
+
 

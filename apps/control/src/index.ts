@@ -7,6 +7,7 @@ import path from 'path';
 import type { MessageFromServing } from './types';
 import { buildProjectAndNotifyToRun } from './agent/tool/code/buildSource';
 import { processPrompt } from './agent';
+import { startSSEServer } from './sse';
 
 const bucketName = process.env.BUCKET_NAME  || "lovable";
 
@@ -257,6 +258,8 @@ async function ListenServing() {
     
 
 async function main() { 
+    console.log("Control Pod is Running");
+    startSSEServer();
     ListenOrchestator();
     ListenServing()
 

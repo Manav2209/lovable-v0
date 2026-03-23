@@ -39,7 +39,7 @@ export async function createProjectPod(projectId: string) {
             containers: [
                 {
                 name: "control",
-                image: "alpine:3.19",
+                image: "manav2854/control-pod:v0",
                 command: ["sh", "-c", "echo control ready && sleep 365d"],
                 env: [
                     { name: "PROJECT_ID", value: projectId },
@@ -54,7 +54,7 @@ export async function createProjectPod(projectId: string) {
                 },
                 {
                 name: "serving",
-                image: "alpine:3.19",
+                image: "manav2854/serving-pod:v0",
                 command: ["sh", "-c", "echo serving ready && sleep 365d"],
                 env: [
                     { name: "PROJECT_ID", value: projectId },
