@@ -6,18 +6,18 @@ export class RedisManager {
 
     private constructor() {}
 
-    public static  getStandardClient(): RedisType {
+    public static async getStandardClient(): Promise<RedisType> {
         if (!this.standardClient) {
             this.standardClient = createClient({
                 url: process.env.REDIS_URL || 'redis://localhost:6379'
             });
-            this.standardClient.connect().catch(console.error);
+            await this.standardClient.connect().catch(console.error);
         }
         return this.standardClient;
     }
 
 public static async createSubscriberClient():  Promise<RedisType> {
-    const base =  this.getStandardClient();
+    const base =  await this.getStandardClient();
 
     const sub = base.duplicate();
 

@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { RedisManager} from "shared-redis";
+import {createClient } from "redis"
 
-export const redis = RedisManager.getStandardClient();
+export const redis = await createClient().connect()
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });

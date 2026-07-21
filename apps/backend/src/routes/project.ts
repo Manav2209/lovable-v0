@@ -7,6 +7,7 @@ import { eq, and, desc, asc } from "drizzle-orm";
 
 import { conversationHistory, projects } from "../../../../packages/database/schema";
 import { createConversation, createProject, getProject, getProjectById } from "../controller/project";
+import { ResponseManager, responseManager } from "../lib/responseManager";
 
 
 
@@ -57,7 +58,7 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
     });
 
     try {
-        const buildRes = await req.responseManager!.wait(projectId, 30_000);
+        const buildRes = await responseManager.wait(projectId, 30_000);
         const buildResponse  = JSON.parse(buildRes)
 
         if (buildResponse.type === PROJECT_BUILD_FAILED) {
@@ -81,7 +82,7 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
         });
 
         const runRes =
-            await req.responseManager!.wait(projectId, 30_000);
+            await responseManager.wait(projectId, 30_000);
         
             const runResponse= JSON.parse(runRes)
 
@@ -103,7 +104,8 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
         });
         return res
 
-    } catch {
+    } catch (err){
+        console.log(err)
         return res.status(504).json({
             success: false,
             data: null,
@@ -148,7 +150,7 @@ projectRouter.post( "/project/:projectId/build", authMiddleware,async (req, res)
 
     try {
         const buildRes =
-            await req.responseManager!.wait(projectId, 30_000);
+            await responseManager.wait(projectId, 30_000);
         const buildResponse = JSON.parse(buildRes)
 
         if (buildResponse.type === "PROJECT_BUILD_SUCCESS") {
@@ -165,7 +167,8 @@ projectRouter.post( "/project/:projectId/build", authMiddleware,async (req, res)
             error: buildResponse.error ?? "BUILD_FAILED"
         });
 
-    } catch {
+    } catch(err) {
+        console.log(err)
         return res.status(504).json({
             success: false,
             data: null,

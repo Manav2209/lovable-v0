@@ -25,7 +25,7 @@ export async function processPrompt(
     });
 
     await redis.xAdd(ControlToOrchestator , "*" , {
-      value : JSON.stringify({
+      data : JSON.stringify({
         key: projectId,
         value: PROMPT_RESPONSE + "|" + getProjectSSEUrl(clientIdUsed),
       })
@@ -67,8 +67,11 @@ export async function processPrompt(
 
 
         await redis.xAdd(OrchestatorToBackend , "*" , {
+          data: JSON.stringify({
             key: projectId , 
             value : `AI_RESPONSE: ${aiResponse}` 
+          })
+            
         })
         console.log(`Agent completed successfully for project ${projectId}`);
 

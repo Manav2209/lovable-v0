@@ -4,7 +4,7 @@ export const BackendToOrchestator ="backend:orch";
 export const OrchestatorToBackend = "orch:backend";
 
 export const OrchestatorToControl = "orch:control";
-export const ControlToOrchestator="control:orch";
+export const ControlToOrchestator = "control:orch";
 
 export const ControlToServing="control:serving"
 export const ServingToControl = "serving:control"

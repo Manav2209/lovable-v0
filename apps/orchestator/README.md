@@ -1,15 +1,3 @@
-# orchestator
-
-To install dependencies:
-
-```bash
-bun install
-```
-
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.2.8. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+$env:KUBECONFIG="C:\Users\Manav\.kube\config"
+>> $env:NODE_TLS_REJECT_UNAUTHORIZED="0"
+>> npx tsx src/index.ts

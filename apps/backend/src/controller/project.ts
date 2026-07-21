@@ -1,4 +1,3 @@
-
 import { conversationSchema, createProjectSchema } from "../lib/schema";
 import { db } from "database";
 import { conversationHistory, projects } from "../../../../packages/database/schema";

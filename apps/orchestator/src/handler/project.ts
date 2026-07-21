@@ -2,6 +2,11 @@ import * as k8s from "@kubernetes/client-node";
 
 const kc = new k8s.KubeConfig();
 kc.loadFromDefault();
+// ✅ FORCE context + credentials
+const currentContext = kc.getCurrentContext();
+kc.setCurrentContext(currentContext);
+
+
 
 const appsApi = kc.makeApiClient(k8s.AppsV1Api);
 const coreApi = kc.makeApiClient(k8s.CoreV1Api);
@@ -40,7 +45,7 @@ export async function createProjectPod(projectId: string) {
                 {
                 name: "control",
                 image: "manav2854/control-pod:v0",
-                command: ["sh", "-c", "echo control ready && sleep 365d"],
+                command: ["bun","run" ,"dev"],
                 env: [
                     { name: "PROJECT_ID", value: projectId },
                     { name: "SHARED_DIR", value: "/app/shared" },
@@ -55,7 +60,7 @@ export async function createProjectPod(projectId: string) {
                 {
                 name: "serving",
                 image: "manav2854/serving-pod:v0",
-                command: ["sh", "-c", "echo serving ready && sleep 365d"],
+                command: ["bun","run","dev"],
                 env: [
                     { name: "PROJECT_ID", value: projectId },
                     { name: "SHARED_DIR", value: "/app/shared" },

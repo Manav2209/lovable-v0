@@ -6,9 +6,18 @@ import { createProjectPod } from "./handler/project";
 
 import type { BackendPayload, ChatMessage, ControlMessage, ServingMessage} from "./types";
 import { toK8sName } from "./lib";
+import {createClient } from "redis"
 
-// Redis initalization
-const redis = RedisManager.getStandardClient();
+
+
+// Two readers – one for each blocking stream
+const backendReader = createClient();
+const controlReader = createClient();
+
+// One writer – for all xAdd calls
+const writer = createClient();
+
+
 
 // we will store the response from Control and Server Pod
 // Project ->  resolver
@@ -40,11 +49,9 @@ function waitForControl(projectId: string , timeoutMs = 60_000) {
 async function ListenBackend() {
 
     console.log("Listening on stream:", BackendToOrchestator);
-
     let lastId = "$";
-
     while (true) {
-        const response = await redis.xRead(
+        const response = await backendReader.xRead(
             [{
                 key: BackendToOrchestator,
                 id: lastId,
@@ -52,11 +59,9 @@ async function ListenBackend() {
             {
                 BLOCK: 0 
             });
-
     if (!response) continue;
-    
+    //@ts-ignore
     const messages = response[0]!.messages;
-
         for (const msg of messages) {
             lastId = msg.id;
             const  msgfromBackend  = msg.message as ChatMessage
@@ -91,18 +96,19 @@ async function ListenControlPod() {
     let lastId = "$";
 
     while(true){
-        const res = await redis.xRead(
+        const res = await controlReader.xRead(
             [{ key: ControlToOrchestator, id: lastId }],
             { BLOCK: 0 }
         );
         if (!res) continue;
         console.log(res);
-
+        //@ts-ignore
         for (const msg of res[0]!.messages) {
             lastId = msg.id;
 
-            const data = msg.message as ControlMessage;
-
+            const raw = msg.message?.data;
+            if (!raw) continue;
+            const data: ControlMessage = JSON.parse(raw);
             const resolver = controlResponses.get(data.projectId);
             if (resolver) {
                 resolver(data);
@@ -114,35 +120,48 @@ async function ListenControlPod() {
 
 
 async function createProject(projectId : string){
-    
     const k8sName = toK8sName(projectId);
-
-    await createProjectPod(k8sName);
-
-    console.log("Pod created")
-    const message = await redis.xAdd(OrchestatorToControl,"*",{
-        data: JSON.stringify({
-            type: PROJECT_INITIALIZED,
-            projectId
-        })
-        }
-
-    );
-    console.log("Message send" , message)
-    const response = await waitForControl(projectId);
-
-    if (response.type === PROJECT_INITIALIZED && response.success === "true") {
-
-        await redis.xAdd(OrchestatorToBackend, "*", {
+    console.log("STEP 1");
+    // await createProjectPod(k8sName);
+    console.log("STEP 2");
+    
+    console.log(`Stream key: "${OrchestatorToControl}" (type: ${typeof OrchestatorToControl})`);
+    try {
+        const message = await writer.xAdd(OrchestatorToControl, "*", {
+            data: JSON.stringify({
+                type: PROJECT_INITIALIZED,
+                projectId
+            })
+        });
+        console.log("STEP 3", message);
+    } catch (err) {
+        console.error("xAdd failed:", err);
+        // Forward failure to backend
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
-                type: PROJECT_INITIALIZED
+                type: PROJECT_FAILED,
+                payload: "Orchestrator failed to send initialization request"
             })
         });
         return;
     }
 
-    await redis.xAdd(OrchestatorToBackend, "*", {
+    const response = await waitForControl(projectId);
+
+    if (response.type === PROJECT_INITIALIZED && response.success === "true") {
+
+        await writer.xAdd(OrchestatorToBackend, "*", {
+            data: JSON.stringify({
+                projectId,
+                type: PROJECT_INITIALIZED
+            })
+        });
+        console.log("Message send to backend")
+        return;
+    }
+
+    await writer.xAdd(OrchestatorToBackend, "*", {
         data: JSON.stringify({
             projectId,
             type: PROJECT_FAILED,
@@ -156,7 +175,7 @@ async function createProject(projectId : string){
 async function buildProject(projectId: string){
     console.log("BUILD_PROJECT is being called");
     
-    await redis.xAdd(OrchestatorToControl, "*", {
+    await writer.xAdd(OrchestatorToControl, "*", {
         data: JSON.stringify({
             projectId,
             type: PROJECT_BUILD
@@ -167,7 +186,7 @@ async function buildProject(projectId: string){
     const response : any = await waitForControl(projectId);
     
     if (response.type === PROJECT_BUILD_SUCCESS) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_BUILD_SUCCESS
@@ -177,7 +196,7 @@ async function buildProject(projectId: string){
     }
 
     if (response.type === PROJECT_BUILD_FAILED) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_BUILD_FAILED,
@@ -189,7 +208,7 @@ async function buildProject(projectId: string){
     }
     
     if (response.type === PROJECT_FAILED) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_FAILED,
@@ -202,7 +221,7 @@ async function buildProject(projectId: string){
 }
 
 async function runProject(projectId : string) {
-    await redis.xAdd(OrchestatorToServing, "*", {
+    await writer.xAdd(OrchestatorToServing, "*", {
         data: JSON.stringify({
             projectId,
             type: PROJECT_RUN
@@ -212,7 +231,7 @@ async function runProject(projectId : string) {
     const response : any = await waitForServer(projectId);
     
     if (response.type === PROJECT_RUN_SUCCESS) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_RUN_SUCCESS
@@ -222,7 +241,7 @@ async function runProject(projectId : string) {
     }
     
     if (response.type === PROJECT_RUN_FAILED) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_RUN_FAILED,
@@ -234,7 +253,7 @@ async function runProject(projectId : string) {
     }
     
     if (response.type === PROJECT_FAILED) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROJECT_FAILED,
@@ -247,7 +266,7 @@ async function runProject(projectId : string) {
 }
 
 async function handlePrompt( projectId : string , prompt: string) {
-    await redis.xAdd(OrchestatorToControl, "*", {
+    await writer.xAdd(OrchestatorToControl, "*", {
         data: JSON.stringify({
             projectId,
             type: PROMPT,
@@ -259,7 +278,7 @@ async function handlePrompt( projectId : string , prompt: string) {
     
       // control pod returns SSE url
     if (response.type === PROMPT_RESPONSE) {
-        await redis.xAdd(OrchestatorToBackend, "*", {
+        await writer.xAdd(OrchestatorToBackend, "*", {
             data: JSON.stringify({
                 projectId,
                 type: PROMPT_RESPONSE,
@@ -273,6 +292,13 @@ async function handlePrompt( projectId : string , prompt: string) {
 }
 
 async function main() {
+
+    await Promise.all([
+        backendReader.connect(),
+        controlReader.connect(),
+        writer.connect()
+    ]);
+    
     ListenBackend()
     ListenControlPod();
 }

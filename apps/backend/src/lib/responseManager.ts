@@ -79,3 +79,5 @@ export class ResponseManager {
         }
     }
     
+
+    export const responseManager = new ResponseManager();

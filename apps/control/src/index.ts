@@ -8,12 +8,14 @@ import type { MessageFromServing } from './types';
 import { buildProjectAndNotifyToRun } from './agent/tool/code/buildSource';
 import { processPrompt } from './agent';
 import { startSSEServer } from './sse';
-
+import {createClient } from "redis"
+import type { dmmfToRuntimeDataModel } from '@prisma/client/runtime/client';
 const bucketName = process.env.BUCKET_NAME  || "lovable";
 
-export const redis = RedisManager.getStandardClient();
-
-
+export const redis =  createClient();
+// Use the same configuration as redis (optional)
+const orchReader = redis.duplicate(); // new connection for Orchestator→Control
+const servingReader = redis.duplicate(); // new connection for Serving→Control
 /*  Map -- > {
     projectId , Promise { 
         success: string,
@@ -106,13 +108,14 @@ async function pullTemplatefromR2(projectId: string) {
 
 async function ListenOrchestator(){
     console.log("Reading from Orchestator")
-    let lastId = "0";
+    let lastId = "$";
     while (true) {
-        const res = await redis.xRead(
+        const res = await orchReader.xRead(
             [{ key: OrchestatorToControl, id: lastId }],
             { BLOCK: 0},
         );
         if (!res) continue;
+        //@ts-ignore
         const messages = res[0]!.messages;
             for (const msg of messages) {
                 lastId = msg.id;
@@ -143,7 +146,7 @@ async function ListenOrchestator(){
                             if(!ok) {
                                 throw new Error("template pull")
                             }
-
+                            console.log("temolate pull completed")
                             // Pushing initalization to serving Pod
                             await redis.xAdd(ControlToServing,"*", {
                                 data: JSON.stringify({
@@ -152,6 +155,7 @@ async function ListenOrchestator(){
                                 })
                                 }
                             )
+                            
                             // Waiting for Response from Serving Pod
                             const result =
                             await waitForServingConfirmation(projectId);
@@ -162,24 +166,22 @@ async function ListenOrchestator(){
                             console.log(`[${projectId}] initialization done`);
 
                             await redis.xAdd(ControlToOrchestator, "*", {
-                                value: JSON.stringify({
+                                data: JSON.stringify({
                                     projectId,
                                     type: PROJECT_INITIALIZED,
                                     success: "true"
                                 })
                             });
-
+                            console.log("Message sent back to orch")
                         }catch(e){
                             console.error(`[${projectId}] initialization failed`,e);
-
                             await redis.xAdd(ControlToOrchestator, "*", {
-                                value: JSON.stringify( {
+                                dmmfToRuntimeDataModel: JSON.stringify( {
                                     projectId,
                                     type: PROJECT_INITIALIZED,
                                     success: "false",
                                     payload: String(e),
                                 })
-
                             });
                         } 
                         break;
@@ -218,20 +220,21 @@ async function ListenServing() {
     let lastId =  "0";
 
     while (true) {
-        const res = await redis.xRead(
+        const res = await servingReader.xRead(
             [{ key: ServingToControl, id: lastId }],
             { BLOCK: 0 }
         );
     
         if (!res) continue;
-    
+        // @ts-ignore
         const messages = res[0]!.messages;
     
         for (const msg of messages) {
             lastId = msg.id;
         
-            const streamMsg = msg.message as MessageFromServing;
-            console.log(streamMsg)
+            const raw = msg.message?.data;
+            if (!raw) continue;
+            const streamMsg = JSON.parse(raw);
             const type = streamMsg.type;
             const projectId = streamMsg.projectId;
         
@@ -258,6 +261,12 @@ async function ListenServing() {
     
 
 async function main() { 
+    await Promise.all([
+        redis.connect(),
+        orchReader.connect(),
+        servingReader.connect()
+    ]);
+    console.log("redis connected")
     console.log("Control Pod is Running");
     startSSEServer();
     ListenOrchestator();

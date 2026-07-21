@@ -22,7 +22,7 @@ export const buildProjectAndNotifyToRun = async (
    
 
     await redis.xAdd(ControlToOrchestator , "*", {
-      value: JSON.stringify({
+      data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
         error: "Project directory not found",
@@ -37,7 +37,7 @@ export const buildProjectAndNotifyToRun = async (
    
 
     await redis.xAdd(ControlToOrchestator , "*" ,  {
-      value: JSON.stringify({
+      data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
         error: "package.json not found",
@@ -64,7 +64,7 @@ export const buildProjectAndNotifyToRun = async (
       
 
       await redis.xAdd(ControlToOrchestator , "*" ,  {
-        value: JSON.stringify({
+        data: JSON.stringify({
           key: PROJECT_FAILED,
           projectId,
           error: `Failed to install dependencies: ${installStderr}`,
@@ -88,7 +88,7 @@ export const buildProjectAndNotifyToRun = async (
       console.error(`Failed to build project: ${buildStderr}`);
 
       await redis.xAdd(ControlToOrchestator , "*" ,  {
-        value: JSON.stringify({
+        data: JSON.stringify({
           key: PROJECT_BUILD_FAILED,
           projectId,
           error: `Failed to build project: ${buildStderr}`,
@@ -100,7 +100,7 @@ export const buildProjectAndNotifyToRun = async (
     console.log(`Project ${projectId} build completed successfully`);
     
     await redis.xAdd(ControlToOrchestator , "*" ,  {
-      value: JSON.stringify({
+      data: JSON.stringify({
         key: PROJECT_BUILD_SUCCESS,
         projectId,
         
@@ -112,7 +112,7 @@ export const buildProjectAndNotifyToRun = async (
     console.error(`Build error: ${error instanceof Error ? error.message : String(error)}`);
   
     await redis.xAdd(ControlToOrchestator , "*" , {
-      value: JSON.stringify({
+      data: JSON.stringify({
         key: PROJECT_BUILD_FAILED,
         projectId,
         error: `Build error: ${error instanceof Error ? error.message : String(error)}`,
@@ -157,7 +157,7 @@ export async function runNode(state: WorkflowState): Promise<Partial<WorkflowSta
 
   await redis.xAdd(ControlToServing , "*" , {
     key: state.projectId,
-    value: JSON.stringify({
+    data: JSON.stringify({
       key: PROJECT_RUN,
       projectId: state.projectId,
     }),

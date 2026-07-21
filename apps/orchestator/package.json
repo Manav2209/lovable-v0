@@ -4,12 +4,16 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "npm run build && node ./dist/src/index.js"
+    "dev": "npx tsx src/index.ts"
+
   },
   "devDependencies": {
+    "@types/bun": "latest",
     "shared-redis": "*",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "types": "*",
-    "@types/bun": "latest"
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "typescript": "^5"
