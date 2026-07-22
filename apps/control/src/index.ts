@@ -1,16 +1,32 @@
 import 'dotenv/config'
-import {RedisManager} from "shared-redis";
-import { OrchestatorToControl, ControlToServing, ControlToOrchestator, ServingToControl, PROJECT_INITIALIZED, PROJECT_BUILD, PROMPT} from "types";
+
+import { 
+    OrchestatorToControl,
+    ControlToServing,
+    ServingToControl,
+    PROJECT_INITIALIZED,
+    PROJECT_BUILD,
+    PROMPT,
+    ServingToOrchestrator,
+    PROJECT_FAILED} from "types";
 import { listObjects , getObject} from "r2"
 import fs from "fs"
 import path from 'path';
-import type { MessageFromServing } from './types';
 import { buildProjectAndNotifyToRun } from './agent/tool/code/buildSource';
 import { processPrompt } from './agent';
 import { startSSEServer } from './sse';
 import {createClient } from "redis"
-import type { dmmfToRuntimeDataModel } from '@prisma/client/runtime/client';
+
 const bucketName = process.env.BUCKET_NAME  || "lovable";
+console.log("Control POD started with env:", {
+    NODE_ENV: process.env.NODE_ENV,
+    PROJECT_ID: process.env.PROJECT_ID,
+    BUCKET_NAME: process.env.BUCKET_NAME,
+    REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
+    SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
+    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY ? "***" : undefined,
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ? "***" : undefined,
+});
 
 export const redis =  createClient();
 // Use the same configuration as redis (optional)
@@ -138,13 +154,20 @@ async function ListenOrchestator(){
                     console.log("Missing projectId");
                     continue;
                 }
+
+                if (processing.has(projectId) && type === PROJECT_INITIALIZED) {
+                    console.log(`Project ${projectId} is already being processed, skipping`);
+                    continue;
+                }
+
+                
                 switch(type){
                     case PROJECT_INITIALIZED: 
                         try{
                              // pull the template from the R2
                             const ok = await pullTemplatefromR2(projectId);
                             if(!ok) {
-                                throw new Error("template pull")
+                                throw new Error("template pull failed")
                             }
                             console.log("temolate pull completed")
                             // Pushing initalization to serving Pod
@@ -157,37 +180,30 @@ async function ListenOrchestator(){
                             )
                             
                             // Waiting for Response from Serving Pod
-                            const result =
-                            await waitForServingConfirmation(projectId);
+                            const result = await waitForServingConfirmation(projectId);
             
                             if (result.success !== "true") {
                                 throw new Error(result.payload || "Serving failed");
                             }
                             console.log(`[${projectId}] initialization done`);
 
-                            await redis.xAdd(ControlToOrchestator, "*", {
-                                data: JSON.stringify({
-                                    projectId,
-                                    type: PROJECT_INITIALIZED,
-                                    success: "true"
-                                })
-                            });
-                            console.log("Message sent back to orch")
                         }catch(e){
                             console.error(`[${projectId}] initialization failed`,e);
-                            await redis.xAdd(ControlToOrchestator, "*", {
-                                dmmfToRuntimeDataModel: JSON.stringify( {
+                            await redis.xAdd(ServingToOrchestrator, "*", {
+                                data: JSON.stringify({
+                                    type: PROJECT_FAILED,
                                     projectId,
-                                    type: PROJECT_INITIALIZED,
-                                    success: "false",
                                     payload: String(e),
-                                })
+                                }),
                             });
+                            // Also clean up the processing entry if it's still there
+                        processing.delete(projectId);
                         } 
                         break;
 
                     case PROJECT_BUILD:
                             const buildResultSuccess = await buildProjectAndNotifyToRun(projectId);
+                            
                             buildResultSuccess ? console.log(`Project ${projectId} built successfully.`)
                             : console.log(`Project ${projectId} build failed.`);
                         break;
@@ -217,7 +233,7 @@ async function ListenOrchestator(){
 
 async function ListenServing() {
     console.log("[CONTROL] Reading from Serving stream");
-    let lastId =  "0";
+    let lastId =  "$";
 
     while (true) {
         const res = await servingReader.xRead(
@@ -234,31 +250,46 @@ async function ListenServing() {
         
             const raw = msg.message?.data;
             if (!raw) continue;
-            const streamMsg = JSON.parse(raw);
-            const type = streamMsg.type;
-            const projectId = streamMsg.projectId;
-        
-            switch(type) {
-                case PROJECT_INITIALIZED :
-                    if (!projectId) continue;
-                    const resolver = processing.get(projectId);
-                    if (!resolver) continue;
-                    resolver({
-                        success: streamMsg.success,
-                        payload: streamMsg.payload
-                    });
+            let streamMsg: any;
+            try {
+                streamMsg = JSON.parse(raw);
+            } catch (err) {
+                console.error("Failed to parse serving message:", raw);
+                continue;
+            }
 
-                    processing.delete(projectId);
-                break;
-                
-                default :
-                    console.log(`Received unknown message: ${type} for project: ${projectId} from SERVING_TO_CONTROL`);
-                break;
+            const { type, projectId, success, payload } = streamMsg;
+            if (!projectId) continue;
+
+            // Resolve the waiting promise for this project (if any)
+            const resolver = processing.get(projectId);
+            if (resolver && type === PROJECT_INITIALIZED) {
+                resolver({ success, payload });
+                processing.delete(projectId);
+            } else {
+                console.log(
+                    `Received unknown message: ${type} for project ${projectId} from SERVING_TO_CONTROL`
+                );
             }
         }
     }
 }
-    
+
+async function shutdown(signal: string) {
+    console.log(`Received ${signal}. Shutting down gracefully...`);
+    try {
+        await redis.quit();
+        await orchReader.quit();
+        await servingReader.quit();
+        console.log("All Redis connections closed.");
+    } catch (err) {
+        console.error("Error during shutdown:", err);
+    }
+    process.exit(0);
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main() { 
     await Promise.all([
@@ -269,10 +300,14 @@ async function main() {
     console.log("redis connected")
     console.log("Control Pod is Running");
     startSSEServer();
-    ListenOrchestator();
-    ListenServing()
-
+     // Start listeners concurrently
+    await Promise.all([
+        ListenOrchestator(),
+        ListenServing(),
+    ]);
 }
 
-main()
-
+main().catch((error) => {
+    console.error("Fatal error in Control POD:", error);
+    process.exit(1);
+});

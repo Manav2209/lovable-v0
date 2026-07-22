@@ -1,10 +1,7 @@
-
-import fs from "fs";
-
+import fs from "fs"
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
-
 import { spawn } from "node:child_process";
 import { sendSSEMessage } from "../../../sse";
 import { redis } from "../../../index";
@@ -19,8 +16,7 @@ export const buildProjectAndNotifyToRun = async (
 
   if (!fs.existsSync(dir)) {
     console.error(`Project directory not found: ${dir}`);
-   
-
+  
     await redis.xAdd(ControlToOrchestator , "*", {
       data: JSON.stringify({
         key: PROJECT_FAILED,
@@ -34,7 +30,6 @@ export const buildProjectAndNotifyToRun = async (
   const packageJsonPath = path.join(dir, "package.json");
   if (!fs.existsSync(packageJsonPath)) {
     console.error(`package.json not found: ${packageJsonPath}`);
-   
 
     await redis.xAdd(ControlToOrchestator , "*" ,  {
       data: JSON.stringify({
