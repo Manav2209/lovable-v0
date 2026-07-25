@@ -1,7 +1,8 @@
+import 'dotenv/config'
 import { 
     BackendToOrchestator ,
     OrchestatorToControl ,  
-    ControlToOrchestator, 
+    ControlToOrchestrator, 
     CREATE_PROJECT,
     PROJECT_BUILD,
     PROJECT_RUN,
@@ -14,7 +15,8 @@ import {
     PROMPT_RESPONSE,
     PROJECT_INITIALIZED, 
     PROJECT_CREATED,
-    PROJECT_RUN_FAILED} from "types";
+    PROJECT_RUN_FAILED,
+    ServingToOrchestrator} from "types";
 
 import { createProjectPod } from "./handler/project";
 
@@ -25,7 +27,7 @@ import {createClient } from "redis"
 console.log("Orchestrator started with env:", {
     NODE_ENV: process.env.NODE_ENV,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SKIP_K8S: process.env.SKIP_K8S || "false",
+    SKIP_K8S: process.env.SKIP_K8S || "true",
 });
 
 // Two readers – one for each blocking stream
@@ -125,7 +127,7 @@ async function ListenControlPod() {
 
     while(true){
         const res = await controlReader.xRead(
-            [{ key: ControlToOrchestator, id: lastId }],
+            [{ key: ControlToOrchestrator, id: lastId }],
             { BLOCK: 0 }
         );
         if (!res) continue;
@@ -136,7 +138,7 @@ async function ListenControlPod() {
 
             const raw = msg.message?.data;
             if (!raw) continue;
-            let data: ControlMessage;
+            let data: any
             try {
                 data = JSON.parse(raw);
             } catch (e) {
@@ -168,7 +170,7 @@ async function ListenServingPod(){
 
     while(true){
         const res = await serverReader.xRead(
-            [{ key: ControlToOrchestator, id: lastId }],
+            [{ key: ServingToOrchestrator, id: lastId }],
             { BLOCK: 0 }
         );
         if(!res) continue;
@@ -227,32 +229,30 @@ async function ListenServingPod(){
 
 
 async function createProject(projectId: string) {
-    const k8sName = toK8sName(projectId);
-    const skipK8s = process.env.SKIP_K8S === "true";
+    const skipK8s = process.env.SKIP_K8S?.toLowerCase() === "true";
+    console.log(`[${projectId}] SKIP_K8S = ${skipK8s}`);
 
     if (!skipK8s) {
         try {
-            await createProjectPod(k8sName);
+            await createProjectPod(toK8sName(projectId));
             console.log(`[${projectId}] K8s pod created`);
         } catch (err) {
             console.error(`[${projectId}] K8s pod creation failed:`, err);
-            // Send failure to backend and return
             await writer.xAdd(OrchestatorToBackend, "*", {
                 data: JSON.stringify({ projectId, type: PROJECT_FAILED, payload: String(err) })
             });
-            return;
+            return; // <-- stop here
         }
     } else {
         console.log(`[${projectId}] Skipping K8s pod creation (SKIP_K8S=true)`);
     }
 
-    // Fire‑and‑forget to control – the serving pod will reply with PROJECT_CREATED or PROJECT_FAILED
+    // Fire‑and‑forget to control
     await writer.xAdd(OrchestatorToControl, "*", {
         data: JSON.stringify({ type: PROJECT_INITIALIZED, projectId })
     });
     console.log(`[${projectId}] PROJECT_INITIALIZED sent to control, waiting for async response from serving`);
 }
-
 async function buildProject(projectId: string){
     console.log("BUILD_PROJECT is being called");
     

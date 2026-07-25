@@ -4,7 +4,7 @@ import { sendSSEMessage, getProjectSSEUrl } from "../../sse";
 import { executeMainFlow } from "../graphs/main";
 import { getProjectMemories, saveConversationMemory } from "../../memory";
 import { redis } from "../..";
-import { ControlToOrchestator, OrchestatorToBackend, PROMPT_RESPONSE } from "types";
+import { ControlToOrchestrator, OrchestatorToBackend, PROMPT_RESPONSE } from "types";
 
 export async function processPrompt(
   projectId: string,
@@ -24,7 +24,7 @@ export async function processPrompt(
       message: "Processing prompt...",
     });
 
-    await redis.xAdd(ControlToOrchestator , "*" , {
+    await redis.xAdd(ControlToOrchestrator , "*" , {
       data : JSON.stringify({
         key: projectId,
         value: PROMPT_RESPONSE + "|" + getProjectSSEUrl(clientIdUsed),

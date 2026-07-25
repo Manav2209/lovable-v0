@@ -3,9 +3,11 @@ import cors from "cors";
 import express from "express";
 import { authRouter } from "./routes/auth";
 import { projectRouter } from "./routes/project";
+import { startOrchestratorListener } from "./lib/orchestatorListener";
 
 
 const app = express();
+startOrchestratorListener();
 
 app.use(express.json());
 app.use(cors());

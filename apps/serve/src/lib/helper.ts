@@ -2,7 +2,7 @@ import { getObject, listObjects } from "r2";
 import fs from "fs";
 import path from "path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { PROJECT_FAILED, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, ServingToOrchestator } from "types";
+import { PROJECT_FAILED, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, ServingToOrchestrator } from "types";
 import { redis } from "..";
 
 const runningProcesses = new Map<string, ChildProcess>();
@@ -83,7 +83,7 @@ export const serveTheProject = async (
   const dir = path.join(sharedDir, projectId);
 
   if (!fs.existsSync(dir)) {
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_FAILED,
@@ -95,7 +95,7 @@ export const serveTheProject = async (
 
   const packageJsonPath = path.join(dir, "package.json");
   if (!fs.existsSync(packageJsonPath)) {
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_FAILED,
@@ -108,7 +108,7 @@ export const serveTheProject = async (
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
   const startScript = packageJson.scripts?.start;
   if (!startScript) {
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_FAILED,
@@ -153,7 +153,7 @@ export const serveTheProject = async (
   if (installCode !== 0) {
     console.error(`Failed to install dependencies for ${projectId}`);
   
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_RUN_FAILED,
@@ -207,7 +207,7 @@ export const serveTheProject = async (
 
   if (checkCode === 0) {
     console.log(`Server is running on port ${port} for project ${projectId}`);
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_RUN_SUCCESS,
@@ -222,7 +222,7 @@ export const serveTheProject = async (
 
       if (code !== 0) {
 
-        await redis.xAdd(ServingToOrchestator , "*" , {
+        await redis.xAdd(ServingToOrchestrator , "*" , {
           data: JSON.stringify({
             projectId : projectId,
             key: PROJECT_RUN_FAILED,
@@ -241,7 +241,7 @@ export const serveTheProject = async (
     proc.kill();
     runningProcesses.delete(projectId);
 
-    await redis.xAdd(ServingToOrchestator , "*" , {
+    await redis.xAdd(ServingToOrchestrator , "*" , {
       data: JSON.stringify({
         projectId : projectId,
         key: PROJECT_RUN_FAILED,

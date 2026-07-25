@@ -46,11 +46,9 @@ export class ResponseManager {
     
     getActiveChannelsCount() {
     let count = 0;
-    
     for (const list of this.responses.values()) {
             count += list.length;
     }
-    
         return count;
     }
     

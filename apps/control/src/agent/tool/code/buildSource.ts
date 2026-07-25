@@ -5,7 +5,7 @@ import * as z from "zod";
 import { spawn } from "node:child_process";
 import { sendSSEMessage } from "../../../sse";
 import { redis } from "../../../index";
-import { ControlToOrchestator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, PROJECT_RUN } from "types";
+import { ControlToOrchestrator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, PROJECT_RUN } from "types";
 import type { WorkflowState } from "../../graphs/workflow";
 
 export const buildProjectAndNotifyToRun = async (
@@ -17,7 +17,7 @@ export const buildProjectAndNotifyToRun = async (
   if (!fs.existsSync(dir)) {
     console.error(`Project directory not found: ${dir}`);
   
-    await redis.xAdd(ControlToOrchestator , "*", {
+    await redis.xAdd(ControlToOrchestrator , "*", {
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
@@ -31,7 +31,7 @@ export const buildProjectAndNotifyToRun = async (
   if (!fs.existsSync(packageJsonPath)) {
     console.error(`package.json not found: ${packageJsonPath}`);
 
-    await redis.xAdd(ControlToOrchestator , "*" ,  {
+    await redis.xAdd(ControlToOrchestrator , "*" ,  {
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
@@ -58,7 +58,7 @@ export const buildProjectAndNotifyToRun = async (
       console.error(`Failed to install dependencies: ${installStderr}`);
       
 
-      await redis.xAdd(ControlToOrchestator , "*" ,  {
+      await redis.xAdd(ControlToOrchestrator , "*" ,  {
         data: JSON.stringify({
           key: PROJECT_FAILED,
           projectId,
@@ -82,7 +82,7 @@ export const buildProjectAndNotifyToRun = async (
     if (buildCode !== 0) {
       console.error(`Failed to build project: ${buildStderr}`);
 
-      await redis.xAdd(ControlToOrchestator , "*" ,  {
+      await redis.xAdd(ControlToOrchestrator , "*" ,  {
         data: JSON.stringify({
           key: PROJECT_BUILD_FAILED,
           projectId,
@@ -94,7 +94,7 @@ export const buildProjectAndNotifyToRun = async (
 
     console.log(`Project ${projectId} build completed successfully`);
     
-    await redis.xAdd(ControlToOrchestator , "*" ,  {
+    await redis.xAdd(ControlToOrchestrator , "*" ,  {
       data: JSON.stringify({
         key: PROJECT_BUILD_SUCCESS,
         projectId,
@@ -106,7 +106,7 @@ export const buildProjectAndNotifyToRun = async (
   } catch (error) {
     console.error(`Build error: ${error instanceof Error ? error.message : String(error)}`);
   
-    await redis.xAdd(ControlToOrchestator , "*" , {
+    await redis.xAdd(ControlToOrchestrator , "*" , {
       data: JSON.stringify({
         key: PROJECT_BUILD_FAILED,
         projectId,

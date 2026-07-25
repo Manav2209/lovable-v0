@@ -8,7 +8,10 @@ import {
     PROJECT_BUILD,
     PROMPT,
     ServingToOrchestrator,
-    PROJECT_FAILED} from "types";
+    PROJECT_FAILED,
+    PROJECT_BUILD_FAILED,
+    PROJECT_BUILD_SUCCESS,
+    ControlToOrchestrator} from "types";
 import { listObjects , getObject} from "r2"
 import fs from "fs"
 import path from 'path';
@@ -23,7 +26,7 @@ console.log("Control POD started with env:", {
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
+    SHARED_DIR: process.env.SHARED_DIR || path.join(process.cwd(), 'shared'),
     GOOGLE_API_KEY: process.env.GOOGLE_API_KEY ? "***" : undefined,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ? "***" : undefined,
 });
@@ -202,10 +205,32 @@ async function ListenOrchestator(){
                         break;
 
                     case PROJECT_BUILD:
+                        try {
                             const buildResultSuccess = await buildProjectAndNotifyToRun(projectId);
-                            
-                            buildResultSuccess ? console.log(`Project ${projectId} built successfully.`)
-                            : console.log(`Project ${projectId} build failed.`);
+                            const responseType = buildResultSuccess
+                                ? PROJECT_BUILD_SUCCESS
+                                : PROJECT_BUILD_FAILED;
+                    
+                            await redis.xAdd(ControlToOrchestrator, "*", {
+                                data: JSON.stringify({
+                                    projectId,
+                                    type: responseType,
+                                    success: buildResultSuccess ? "true" : "false",
+                                    payload: buildResultSuccess ? "" : "Build failed"
+                                })
+                            });
+                            console.log(`[${projectId}] Build result (${responseType}) sent to orchestrator`);
+                        } catch (error) {
+                            console.error(`[${projectId}] Build error:`, error);
+                            await redis.xAdd(ControlToOrchestrator, "*", {
+                                data: JSON.stringify({
+                                    projectId,
+                                    type: PROJECT_BUILD_FAILED,
+                                    success: "false",
+                                    payload: String(error)
+                                })
+                            });
+                        }
                         break;
                         
                     case PROMPT :

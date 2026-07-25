@@ -19,10 +19,10 @@ console.log("Serving POD started with env:", {
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
+    SHARED_DIR: process.env.SHARED_DIR ||  path.join(process.cwd(), 'shared') ,
 });
 
-export const redis = await createClient().connect();   // writer
+export const redis = await createClient();   // writer
 
 const controlReader = redis.duplicate();
 const orchReader = redis.duplicate();

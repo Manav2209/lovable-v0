@@ -5,7 +5,6 @@
   "private": true,
   "scripts": {
     "dev": "npx tsx src/index.ts"
-
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -19,6 +18,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^1.4.0"
+    "@kubernetes/client-node": "^1.4.0",
+    "@types/redis": "^4.0.11"
   }
 }
