@@ -1,14 +1,15 @@
-import { conversationSchema, createProjectSchema } from "../lib/schema";
+import {  createProjectSchema } from "../lib/schema";
 import { db } from "database";
 import { conversationHistory, projects } from "../../../../packages/database/schema";
 import {redis} from "../lib/helper"
-import { BackendToOrchestator, CREATE_PROJECT } from "types";
+import { BackendToOrchestator, CREATE_PROJECT, PROJECT_FAILED, PROJECT_INITIALIZED, PROMPT, PROMPT_RESPONSE } from "types";
 import { createRandomJobId } from "../lib/helper";
 import { eq, and, desc, asc } from "drizzle-orm";
+import { responseManager } from "../lib/responseManager";
+import type {Request , Response} from "express";
 
 
-
-export const  createProject = async ( req , res ) => {
+export const  createProject = async ( req :Request, res : Response) => {
     const { success, data } = createProjectSchema.safeParse(req.body);
 
     if (!success) {
@@ -54,19 +55,41 @@ export const  createProject = async ( req , res ) => {
                 })
             }
         );
-
-    return res.status(201).json({
-        success: true,
-        data: {
-            project,
-            messageId: message!.id,
-            jobId
-        },
-        error: null,
-        });
+        try {
+            // Wait for PROJECT_INITIALIZED (or PROJECT_FAILED)
+            const result = await responseManager.wait(projectId, 30_000);
+            const parsed = JSON.parse(result);
+    
+            if (parsed.type === PROJECT_INITIALIZED) {
+                return res.status(201).json({
+                    success: true,
+                    data: { projectId },
+                    error: null
+                });
+            } else if (parsed.type === PROJECT_FAILED) {
+                return res.status(500).json({
+                    success: false,
+                    data: null,
+                    error: parsed.payload ?? "PROJECT_CREATION_FAILED"
+                });
+            } else {
+                return res.status(500).json({
+                    success: false,
+                    data: null,
+                    error: "UNEXPECTED_RESPONSE"
+                });
+            }
+        } catch (err) {
+            console.error(`Create project timeout for ${projectId}:`, err);
+            return res.status(504).json({
+                success: false,
+                data: null,
+                error: "TIMEOUT"
+            });
+        }
 }
 
-export const getProject = async ( req , res ) => {
+export const getProject = async ( req : Request , res : Response) => {
     const userProjects = await db
         .select()
         .from(projects)
@@ -115,44 +138,79 @@ export const getProjectById = async (req, res) => {
 
 export const createConversation = async (req, res) => {
     const { projectId } = req.params;
-    const { success, data } = conversationSchema.safeParse(req.body);
+    const { prompt } = req.body;
 
-    if (!success) {
+    if (!prompt) {
         return res.status(400).json({
             success: false,
-            data: null,
-            error: "INVALID_REQUEST",
+            error: "PROMPT_REQUIRED"
         });
     }
 
+    // Verify project belongs to user
     const project = await db
         .select()
         .from(projects)
-        .where(and(eq(projects.id, projectId), eq(projects.userId, req.userId!)))
+        .where(
+            and(
+                eq(projects.id, projectId),
+                eq(projects.userId, req.userId!)
+            )
+        )
         .limit(1);
 
     if (project.length === 0) {
         return res.status(404).json({
             success: false,
-            data: null,
-            error: "PROJECT_NOT_FOUND",
+            error: "PROJECT_NOT_FOUND"
         });
     }
 
-    const [message] = await db
-        .insert(conversationHistory)
-        .values({
-            projectId,
-            type: data.type,
-            from: data.from,
-            contents: data.contents,
-            toolCall: data.toolCall ?? null,
-        })
-        .returning();
+    const jobId = createRandomJobId();
 
-    return res.status(201).json({
-        success: true,
-        data: message,
-        error: null,
+    // Send PROMPT to orchestrator
+    await redis.xAdd(BackendToOrchestator, "*", {
+        type: PROMPT,
+        payload: JSON.stringify({
+            projectId,
+            jobId,
+            userId: req.userId,
+            prompt
+        })
     });
+
+    try {
+        // Wait for PROMPT_RESPONSE (SSE URL)
+        
+        const response = await responseManager.wait(projectId, 60_000);
+        const parsed = JSON.parse(response);
+
+        if (parsed.type === PROMPT_RESPONSE) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    sseUrl: parsed.payload
+                },
+                error: null
+            });
+        } else if (parsed.type === PROJECT_FAILED) {
+            return res.status(500).json({
+                success: false,
+                data: null,
+                error: parsed.payload ?? "PROMPT_PROCESSING_FAILED"
+            });
+        } else {
+            // Unexpected response type
+            return res.status(500).json({
+                success: false,
+                error: "UNEXPECTED_RESPONSE"
+            });
+        }
+    } catch (err) {
+        console.error("Prompt timeout or error:", err);
+        return res.status(504).json({
+            success: false,
+            error: "TIMEOUT"
+        });
+    }
 }

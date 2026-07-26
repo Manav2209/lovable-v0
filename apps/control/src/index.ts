@@ -27,8 +27,7 @@ console.log("Control POD started with env:", {
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
     SHARED_DIR: process.env.SHARED_DIR || path.join(process.cwd(), 'shared'),
-    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY ? "***" : undefined,
-    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ? "***" : undefined,
+    GROQ_API_KEY: process.env.GROQ_API_KEY ? "***" : undefined,
 });
 
 export const redis =  createClient();
@@ -64,65 +63,55 @@ function waitForServingConfirmation(
         );
     }
 
-async function pullTemplatefromR2(projectId: string) {
-        try{
-            // check if template exists
+    async function pullTemplatefromR2(projectId: string) {
+        try {
             const { Contents } = await listObjects({
                 Bucket: bucketName,
                 Prefix: "template/",
             });
-        
     
             if (!Contents || Contents.length === 0) {
                 throw new Error("No template files found in bucket");
             }
-            // create a shared Dir
+    
             const sharedDir = process.env.SHARED_DIR || "/app/shared";
             const projectDir = path.join(sharedDir, projectId);
-        
+    
             if (!fs.existsSync(sharedDir)) {
                 fs.mkdirSync(sharedDir, { recursive: true });
             }
-        
             fs.mkdirSync(projectDir, { recursive: true });
-        
+    
             for (const obj of Contents) {
                 if (!obj.Key) continue;
-            
                 if (obj.Key === "template/") continue;
-            
                 const relativePath = obj.Key.replace("template/", "");
-            
                 try {
                     const { Body } = await getObject({
-                    Bucket: bucketName,
-                    Key: obj.Key,
+                        Bucket: bucketName,
+                        Key: obj.Key,
                     });
-            
                     const filePath = path.join(projectDir, relativePath);
-            
                     const fileDir = path.dirname(filePath);
                     if (!fs.existsSync(fileDir)) {
-                    fs.mkdirSync(fileDir, { recursive: true });
+                        fs.mkdirSync(fileDir, { recursive: true });
                     }
-            
                     const buffer = Buffer.from(
-                    (await Body?.transformToByteArray()) || new Uint8Array(),
+                        (await Body?.transformToByteArray()) || new Uint8Array()
                     );
                     fs.writeFileSync(filePath, buffer);
-                        } catch (error) {
-                            console.error(`Failed to download ${obj.Key}:`, error);
-                        }
-                    console.log("completed")
-                    return true;
-                    }
-                }catch (error) {
-                    console.error("Error in  pull code from bucket:", error);
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    console.log(errorMessage);
-                    return false;
+                    console.log(`[${projectId}] Downloaded: ${relativePath}`);
+                } catch (error) {
+                    console.error(`Failed to download ${obj.Key}:`, error);
+                }
             }
     
+            console.log(`[${projectId}] Template pull completed (${Contents.length} files processed)`);
+            return true;
+        } catch (error) {
+            console.error("Error in pullTemplatefromR2:", error);
+            return false;
+        }
     }
 
 async function ListenOrchestator(){

@@ -296,6 +296,14 @@ async function buildProject(projectId: string){
 async function runProject(projectId : string) {
     console.log(`[${projectId}] RUN_PROJECT called`);
 
+    await writer.xAdd(OrchestatorToControl, "*", {
+        data: JSON.stringify({
+            projectId,
+            type: PROJECT_RUN
+        })
+
+    });
+
     try {
         const response = await waitForServer(projectId);
         if (response.type === PROJECT_RUN_SUCCESS) {

@@ -1,5 +1,4 @@
 export class ResponseManager {
-
     // projectId , [{response}]
     private responses = new Map<string, Array<(value: string) => void>>();
 

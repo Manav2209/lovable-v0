@@ -7,7 +7,9 @@ import { startOrchestratorListener } from "./lib/orchestatorListener";
 
 
 const app = express();
-startOrchestratorListener();
+startOrchestratorListener().catch((err) => {
+  console.error("Failed to start orchestrator listener:", err);
+});
 
 app.use(express.json());
 app.use(cors());

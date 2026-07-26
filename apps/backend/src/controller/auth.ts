@@ -3,10 +3,11 @@ import { users } from "../../../../packages/database/schema";
 import { LoginSchema, SignUpSchema } from "../lib/schema";
 import bcrypt from "bcrypt";
 import { eq } from "drizzle-orm";
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
+import type {Request , Response} from "express"
 
 
-export const signup = async  (req , res) => {
+export const signup = async  (req : Request, res: Response) => {
     const { success, data } = SignUpSchema.safeParse(req.body);
 
     if (!success) {
@@ -49,7 +50,7 @@ export const signup = async  (req , res) => {
     });
 }
 
-export const login = async (req , res) => {
+export const login = async (req: Request, res: Response) => {
     const { success, data } = LoginSchema.safeParse(req.body);
 
     if (!success) {

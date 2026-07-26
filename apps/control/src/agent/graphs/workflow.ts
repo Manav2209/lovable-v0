@@ -198,8 +198,8 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
                         message: "Build test passed, proceeding to deployment",
                     });
 
-                    const pushResult = await pushNode(state);
-                    state = { ...state, ...pushResult };
+                    // const pushResult = await pushNode(state);
+                    // state = { ...state, ...pushResult };
 
                     const saveResult = await saveNode(state);
                     state = { ...state, ...saveResult };

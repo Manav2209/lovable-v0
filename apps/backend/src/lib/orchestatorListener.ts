@@ -14,18 +14,37 @@ async function listenToOrchestrator() {
                 { BLOCK: 0 }
             );
             if (!res) continue;
-            // @ts-ignore – structure is known
+
+            //@ts-ignore
             const messages = res[0]!.messages;
             for (const msg of messages) {
                 lastId = msg.id;
                 const raw = msg.message?.data;
-                if (!raw) continue;
-                const data = JSON.parse(raw);
-                const { projectId, type, payload } = data;
-                if (!projectId) continue;
-                console.log(`[Backend] Received from orchestrator: ${type} for ${projectId}`);
-                // Resolve the waiting promise
-                responseManager.resolve(projectId, JSON.stringify({ type, payload }));
+                if (!raw) {
+                    console.warn(`[Backend] Skipping message ${msg.id} with no data field`);
+                    continue;
+                }
+
+                let data: any;
+                try {
+                    data = JSON.parse(raw);
+                } catch (parseErr) {
+                    console.error(`[Backend] Failed to parse message ${msg.id}:`, parseErr);
+                    continue;
+                }
+
+                const { projectId, jobId, type, payload } = data;
+
+                if (!projectId || !jobId) {
+                    console.warn(`[Backend] Skipping message ${msg.id}: missing projectId or jobId`, data);
+                    continue;
+                }
+
+                console.log(`[Backend] Received from orchestrator: ${type} for project=${projectId} job=${jobId}`);
+
+                //TODO:  Resolve the waiting promise, correlated by jobId (not just projectId)
+
+                responseManager.resolve(projectId,  JSON.stringify({ type, payload }));
             }
         } catch (err) {
             console.error("Error in orchestrator listener:", err);
@@ -39,4 +58,18 @@ export async function startOrchestratorListener() {
     await redis.connect();
     console.log("Redis connected for orchestrator listener");
     listenToOrchestrator();
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+async function shutdown(signal: string) {
+    console.log(`[Backend] Received ${signal}, shutting down orchestrator listener...`);
+    try {
+        await redis.quit();
+    } catch (err) {
+        console.error("Error closing redis connection:", err);
+    } finally {
+        process.exit(0);
+    }
 }
