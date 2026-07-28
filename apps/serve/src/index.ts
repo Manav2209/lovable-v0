@@ -7,7 +7,9 @@ import {
     PROJECT_RUN,
     ServingToOrchestrator,
     PROJECT_CREATED,
-    PROJECT_FAILED
+    PROJECT_FAILED,
+    PROJECT_RUN_SUCCESS,
+    PROJECT_RUN_FAILED
 } from "types"
 import path from "path";
 import fs from "fs"
@@ -19,15 +21,54 @@ console.log("Serving POD started with env:", {
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SHARED_DIR: process.env.SHARED_DIR ||  path.join(process.cwd(), 'shared') ,
+    SHARED_DIR: process.env.SHARED_DIR || "/app/shared" ,
 });
 
-export const redis = await createClient();   // writer
-
+export const redis =  createClient({
+    url: process.env.REDIS_URL || "redis://localhost:6379",
+    socket: {
+        family: 4,   // ✅ force IPv4
+    }
+});
 const controlReader = redis.duplicate();
 const orchReader = redis.duplicate();
 export let projectRunning = false;
 
+
+async function handleRunProject(projectId: string) {
+    try {
+        console.log(`[${projectId}] Attempting to serve project`);
+        if (!checkIfProjectFilesExist(projectId)) {
+            throw new Error("Project files missing");
+        }
+        await serveTheProject(projectId);
+        console.log(`[${projectId}] Project is now running`);
+        projectRunning = true;
+
+        // Send success to orchestrator
+        await redis.xAdd(ServingToOrchestrator, "*", {
+            data: JSON.stringify({
+                type: PROJECT_RUN_SUCCESS,
+                projectId,
+                payload: `${projectId}.localhost:3000`, // or the actual URL
+            }),
+        });
+        console.log(`[${projectId}] Sent PROJECT_RUN_SUCCESS to orchestrator`);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[${projectId}] Run failed:`, errorMessage);
+
+        // Send failure to orchestrator
+        await redis.xAdd(ServingToOrchestrator, "*", {
+            data: JSON.stringify({
+                type: PROJECT_RUN_FAILED,
+                projectId,
+                payload: errorMessage,
+            }),
+        });
+        console.log(`[${projectId}] Sent PROJECT_RUN_FAILED to orchestrator`);
+    }
+}
 
 async function ListenControl(){
 
@@ -126,18 +167,8 @@ async function ListenControl(){
                     break;
                 
                 case PROJECT_RUN:
-                    
-                        console.log(`[${projectId}] PROJECT_RUN received from Control`);
-                        if (!checkIfProjectFilesExist(projectId)) {
-                            console.warn(`[${projectId}] Project files missing, skipping run`);
-                            break;
-                        }
-
-                        await serveTheProject(projectId);
-                        console.log(`Project ${projectId} is now running.`);
-                        projectRunning = true;
-                        break;
-                    
+                    await handleRunProject(projectId);
+                    break;
                     
                 default:
                         console.log(
@@ -189,20 +220,10 @@ async function ListenOrchestator () {
 
             switch(type){
                 case PROJECT_RUN:
-                    console.log(`[${projectId}] PROJECT_RUN received from Orchestrator`);
-                    if (!checkIfProjectFilesExist(projectId)) {
-                        console.warn(`[${projectId}] Project files missing, skipping run`);
+                    await handleRunProject(projectId);
                         break;
-                    }                        
-                    await serveTheProject(projectId);
-                    console.log(`Project ${projectId} is now running.`);
-                    projectRunning = true;
-                    break;
                 default:
-                    console.log(
-                        `Received unknown message: ${type}} for project: ${projectId} from control pod`,
-                    );
-                    break;
+                    console.log(`Received unknown message: ${type}} for project: ${projectId} from control pod`,);
             }
         }
     }

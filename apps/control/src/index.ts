@@ -1,5 +1,4 @@
 import 'dotenv/config'
-
 import { 
     OrchestatorToControl,
     ControlToServing,
@@ -21,27 +20,33 @@ import { startSSEServer } from './sse';
 import {createClient } from "redis"
 
 const bucketName = process.env.BUCKET_NAME  || "lovable";
+
 console.log("Control POD started with env:", {
     NODE_ENV: process.env.NODE_ENV,
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SHARED_DIR: process.env.SHARED_DIR || path.join(process.cwd(), 'shared'),
+    SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
     GROQ_API_KEY: process.env.GROQ_API_KEY ? "***" : undefined,
 });
 
-export const redis =  createClient();
+export const redis =  createClient({
+    url: process.env.REDIS_URL || "redis://localhost:6379",
+    socket: {
+        family: 4,   // ✅ force IPv4
+    }
+});
 // Use the same configuration as redis (optional)
 const orchReader = redis.duplicate(); // new connection for Orchestator→Control
 const servingReader = redis.duplicate(); // new connection for Serving→Control
+
 /*  Map -- > {
     projectId , Promise { 
         success: string,
         payload: string
     }
 }*/
-const processing = new Map<string,
-(value: { success: string; payload?: string }) => void>();
+const processing = new Map<string,(value: { success: string; payload?: string }) => void>();
 
 function waitForServingConfirmation(
     projectId: string,
@@ -161,7 +166,8 @@ async function ListenOrchestator(){
                             if(!ok) {
                                 throw new Error("template pull failed")
                             }
-                            console.log("temolate pull completed")
+                            console.log("temolate pull completed");
+
                             // Pushing initalization to serving Pod
                             await redis.xAdd(ControlToServing,"*", {
                                 data: JSON.stringify({

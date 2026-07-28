@@ -35,10 +35,10 @@ async function listenToOrchestrator() {
 
                 const { projectId, jobId, type, payload } = data;
 
-                if (!projectId || !jobId) {
-                    console.warn(`[Backend] Skipping message ${msg.id}: missing projectId or jobId`, data);
-                    continue;
-                }
+                // if (!projectId || !jobId) {
+                //     console.warn(`[Backend] Skipping message ${msg.id}: missing projectId or jobId`, data);
+                //     continue;
+                // }
 
                 console.log(`[Backend] Received from orchestrator: ${type} for project=${projectId} job=${jobId}`);
 

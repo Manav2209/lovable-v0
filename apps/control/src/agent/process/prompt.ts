@@ -24,13 +24,13 @@ export async function processPrompt(
       message: "Processing prompt...",
     });
 
-    await redis.xAdd(ControlToOrchestrator , "*" , {
-      data : JSON.stringify({
-        key: projectId,
-        value: PROMPT_RESPONSE + "|" + getProjectSSEUrl(clientIdUsed),
+    await redis.xAdd(ControlToOrchestrator, "*", {
+      data: JSON.stringify({
+          projectId: projectId,
+          type: PROMPT_RESPONSE,
+          payload: getProjectSSEUrl(clientIdUsed)
       })
-
-    })
+  });
     console.log(`Sent SSE URL to orchestrator for project ${projectId}: ${getProjectSSEUrl(clientIdUsed)}`);
 
     let finalState;
@@ -65,14 +65,6 @@ export async function processPrompt(
 
         await saveConversationMemory(projectId, prompt, aiResponse);
 
-
-        await redis.xAdd(OrchestatorToBackend , "*" , {
-          data: JSON.stringify({
-            key: projectId , 
-            value : `AI_RESPONSE: ${aiResponse}` 
-          })
-            
-        })
         console.log(`Agent completed successfully for project ${projectId}`);
 
   

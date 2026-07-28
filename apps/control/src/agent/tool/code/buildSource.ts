@@ -94,13 +94,7 @@ export const buildProjectAndNotifyToRun = async (
 
     console.log(`Project ${projectId} build completed successfully`);
     
-    await redis.xAdd(ControlToOrchestrator , "*" ,  {
-      data: JSON.stringify({
-        key: PROJECT_BUILD_SUCCESS,
-        projectId,
-        
-      }),
-    })
+    
     
     return true;
   } catch (error) {

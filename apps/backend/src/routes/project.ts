@@ -47,28 +47,28 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
     const jobId = createRandomJobId();
 
     // Trigger BUILD
-    await redis.xAdd(BackendToOrchestator, "*", {
-        type: PROJECT_BUILD,
-        payload: JSON.stringify({
-            projectId,
-            jobId,
-            userId: req.userId!
-        })
-    });
+    // await redis.xAdd(BackendToOrchestator, "*", {
+    //     type: PROJECT_BUILD,
+    //     payload: JSON.stringify({
+    //         projectId,
+    //         jobId,
+    //         userId: req.userId!
+    //     })
+    // });
 
     try {
-        const buildRes = await responseManager.wait(projectId, 30_000);
-        const buildResponse  = JSON.parse(buildRes)
+        // const buildRes = await responseManager.wait(projectId, 60_000);
+        // const buildResponse  = JSON.parse(buildRes)
 
-        if (buildResponse.type === PROJECT_BUILD_FAILED || buildResponse.type === PROJECT_FAILED) {
+        // if (buildResponse.type === PROJECT_BUILD_FAILED || buildResponse.type === PROJECT_FAILED) {
 
-            return res.status(500).json({
-                success: false,
-                data: null,
-                error: buildResponse.error ?? "BUILD_FAILED"
-                });
+        //     return res.status(500).json({
+        //         success: false,
+        //         data: null,
+        //         error: buildResponse.error ?? "BUILD_FAILED"
+        //         });
 
-        }
+        // }
 
         // Trigger RUN
         await redis.xAdd(BackendToOrchestator, "*", {
@@ -80,7 +80,7 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             })
         });
 
-        const runRes = await responseManager.wait(projectId, 30_000);
+        const runRes = await responseManager.wait(projectId, 60_000);
         
         const runResponse= JSON.parse(runRes)
 
@@ -153,7 +153,7 @@ projectRouter.post("/project/:projectId/build", authMiddleware, async (req, res)
         });
     
         try {
-            const buildRes = await responseManager.wait(projectId, 30_000);
+            const buildRes = await responseManager.wait(projectId, 60_000);
             const buildResponse = JSON.parse(buildRes);
     
             if (buildResponse.type === PROJECT_BUILD_SUCCESS) {

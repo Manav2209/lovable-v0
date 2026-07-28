@@ -16,7 +16,8 @@ import {
     PROJECT_INITIALIZED, 
     PROJECT_CREATED,
     PROJECT_RUN_FAILED,
-    ServingToOrchestrator} from "types";
+    ServingToOrchestrator,
+    OrchestatorToServing} from "types";
 
 import { createProjectPod } from "./handler/project";
 
@@ -141,6 +142,7 @@ async function ListenControlPod() {
             let data: any
             try {
                 data = JSON.parse(raw);
+                console.log(data);
             } catch (e) {
                 console.error("Failed to parse control message:", raw);
                 continue;
@@ -169,6 +171,7 @@ async function ListenServingPod(){
     let lastId = "$";
 
     while(true){
+        try{
         const res = await serverReader.xRead(
             [{ key: ServingToOrchestrator, id: lastId }],
             { BLOCK: 0 }
@@ -194,10 +197,13 @@ async function ListenServingPod(){
             console.log(`[${projectId}] Received ${type} from serving`);
         
             // 1. Resolve waiting promise (for RUN)
-            const resolver = serverResponses.get(projectId);
-            if (resolver) {
-                resolver(data);
-                serverResponses.delete(projectId);
+            const validRunTypes = [PROJECT_RUN_SUCCESS, PROJECT_RUN_FAILED, PROJECT_FAILED];
+            if (validRunTypes.includes(type)) {
+                const resolver = serverResponses.get(projectId);
+                if (resolver) {
+                    resolver(data);
+                    serverResponses.delete(projectId);
+                }
             }
             // 2. Forward relevant messages to backend
             switch (type) {
@@ -213,22 +219,21 @@ async function ListenServingPod(){
                     });
                     console.log(`[${projectId}] Forwarded PROJECT_FAILED to backend`);
                     break;
-                case PROJECT_RUN_SUCCESS:
-                case PROJECT_RUN_FAILED:
-                    // Already handled by the resolver above, but we might also forward if needed.
-                    // The runProject function already forwards the result after the wait.
-                    break;
                 default:
-                    console.log(`[${projectId}] Unhandled serving message type: ${type}`);
+                    break;
+                }
             }
-
-    }
+        }catch(err){
+            console.error("Error in ListenServingPod:", err);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
     }
 
 }
 
 
 async function createProject(projectId: string) {
+    
     const skipK8s = process.env.SKIP_K8S?.toLowerCase() === "true";
     console.log(`[${projectId}] SKIP_K8S = ${skipK8s}`);
 
@@ -261,10 +266,7 @@ async function buildProject(projectId: string){
             projectId,
             type: PROJECT_BUILD
         })
-
     });
-    //TODO:  fix this type
-    const response : any = await waitForControl(projectId);
     
     try {
         const response = await waitForControl(projectId);
@@ -296,12 +298,11 @@ async function buildProject(projectId: string){
 async function runProject(projectId : string) {
     console.log(`[${projectId}] RUN_PROJECT called`);
 
-    await writer.xAdd(OrchestatorToControl, "*", {
+    await writer.xAdd(OrchestatorToServing, "*", {
         data: JSON.stringify({
             projectId,
             type: PROJECT_RUN
         })
-
     });
 
     try {
