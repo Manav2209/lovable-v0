@@ -18,7 +18,7 @@ export async function createProjectPod(projectId: string) {
     const envVars = [
         { name: "PROJECT_ID", value: projectId },
         { name: "SHARED_DIR", value: "/app/shared" },
-        { name: "REDIS_URL", value: "redis://10.1.0.131:6379" },
+        { name: "REDIS_URL", value: "redis://10.102.241.81:6379" },
         { name: "BUCKET_NAME", value: process.env.BUCKET_NAME || "lovable" },
         { name: "S3_API", value: process.env.S3_API || "" },
         { name: "ACCESS_KEY_ID", value: process.env.ACCESS_KEY_ID || "" },

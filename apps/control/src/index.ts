@@ -121,7 +121,7 @@ function waitForServingConfirmation(
 
 async function ListenOrchestator(){
     console.log("Reading from Orchestator")
-    let lastId = "$";
+    let lastId = "0";
     while (true) {
         const res = await orchReader.xRead(
             [{ key: OrchestatorToControl, id: lastId }],

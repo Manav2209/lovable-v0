@@ -180,7 +180,7 @@ export const serveTheProject = async (
     cwd: dir,
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
-    env: { ...process.env, PORT: port.toString() },
+    env: { ...process.env, PORT: port.toString(), HOST: "0.0.0.0" },   
   });
 
   runningProcesses.set(projectId, proc);
