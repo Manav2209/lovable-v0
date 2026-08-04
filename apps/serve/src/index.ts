@@ -1,6 +1,5 @@
-
-import { 
-    ControlToServing , 
+import {
+    ControlToServing,
     OrchestatorToServing,
     ServingToControl,
     PROJECT_INITIALIZED,
@@ -9,31 +8,28 @@ import {
     PROJECT_CREATED,
     PROJECT_FAILED,
     PROJECT_RUN_SUCCESS,
-    PROJECT_RUN_FAILED
-} from "types"
+    PROJECT_RUN_FAILED,
+} from "types";
 import path from "path";
-import fs from "fs"
+import fs from "fs";
 import { checkIfProjectFilesExist, serveTheProject } from "./lib/helper";
-import {createClient} from "redis";
+import {
+    RedisManager,
+    publishEnvelope,
+    parseStreamFields,
+    readGroupLoop,
+    StreamGroups,
+} from "shared-redis";
 
 console.log("Serving POD started with env:", {
     NODE_ENV: process.env.NODE_ENV,
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
-    SHARED_DIR: process.env.SHARED_DIR || "/app/shared" ,
+    SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
 });
 
-export const redis =  createClient({
-    url: process.env.REDIS_URL || "redis://localhost:6379",
-    socket: {
-        family: 4,   // ✅ force IPv4
-    }
-});
-const controlReader = redis.duplicate();
-const orchReader = redis.duplicate();
 export let projectRunning = false;
-
 
 async function handleRunProject(projectId: string) {
     try {
@@ -41,200 +37,151 @@ async function handleRunProject(projectId: string) {
         if (!checkIfProjectFilesExist(projectId)) {
             throw new Error("Project files missing");
         }
-        await serveTheProject(projectId);
+        const ok = await serveTheProject(projectId);
+        if (!ok) {
+            throw new Error("Failed to start project server");
+        }
         console.log(`[${projectId}] Project is now running`);
         projectRunning = true;
 
-        // Send success to orchestrator
-        await redis.xAdd(ServingToOrchestrator, "*", {
-            data: JSON.stringify({
-                type: PROJECT_RUN_SUCCESS,
-                projectId,
-                payload: `${projectId}.localhost:3000`, // or the actual URL
-            }),
+        await publishEnvelope(ServingToOrchestrator, {
+            type: PROJECT_RUN_SUCCESS,
+            projectId,
+            payload: `${projectId}.localhost:3000`,
         });
         console.log(`[${projectId}] Sent PROJECT_RUN_SUCCESS to orchestrator`);
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+            error instanceof Error ? error.message : String(error);
         console.error(`[${projectId}] Run failed:`, errorMessage);
 
-        // Send failure to orchestrator
-        await redis.xAdd(ServingToOrchestrator, "*", {
-            data: JSON.stringify({
-                type: PROJECT_RUN_FAILED,
-                projectId,
-                payload: errorMessage,
-            }),
+        await publishEnvelope(ServingToOrchestrator, {
+            type: PROJECT_RUN_FAILED,
+            projectId,
+            payload: errorMessage,
         });
         console.log(`[${projectId}] Sent PROJECT_RUN_FAILED to orchestrator`);
     }
 }
 
-async function ListenControl(){
-
-    console.log("Reading from Control Stream" , ControlToServing)
-    let lastId = "$";
-    while (true) {
-        const res = await controlReader.xRead(
-            [{ key: ControlToServing, id: lastId }],
-            { BLOCK: 0},
-        );
-
-        if (!res) continue;
-        // @ts-ignore
-        const messages = res[0]!.messages;
-
-            for (const msg of messages) {
-            lastId = msg.id;
-            const raw = msg.message?.data;
-            if (!raw) continue;
-            let msgFromControl ;
-            try {
-                msgFromControl = JSON.parse(raw);
-            } catch (err) {
-                console.error("Failed to parse control message:", raw);
-                continue;
-            }
-            const projectId = msgFromControl.projectId ;
+async function ListenControl() {
+    await readGroupLoop({
+        stream: ControlToServing,
+        group: StreamGroups.serve,
+        readerRole: "serveControl",
+        handler: async (_id, fields) => {
+            const msgFromControl = parseStreamFields(fields);
+            const projectId = msgFromControl.projectId as string | undefined;
             const type = msgFromControl.type;
 
             if (!projectId) {
                 console.warn("Control message missing projectId");
-                continue;
+                return;
             }
 
             console.log(`[${projectId}] Received from control: ${type}`);
 
-
-            switch(type){
-                case PROJECT_INITIALIZED :
-                    try{
+            switch (type) {
+                case PROJECT_INITIALIZED:
+                    try {
                         console.log(`[${projectId}] Initialization started`);
-                        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-                        const projectDir = path.join(sharedDir , projectId!)
+                        const sharedDir =
+                            process.env.SHARED_DIR || "/app/shared";
+                        const projectDir = path.join(sharedDir, projectId);
 
-                        // server checking 
                         if (!fs.existsSync(projectDir)) {
                             throw new Error("project workspace not found");
                         }
 
                         const files = fs.readdirSync(projectDir);
                         if (files.length === 0) {
-                        throw new Error("project workspace is empty");
+                            throw new Error("project workspace is empty");
                         }
-                        //send to Control Ack ;
-                        await redis.xAdd(ServingToControl, "*", {
-                            data: JSON.stringify({
-                                type: PROJECT_INITIALIZED,
-                                success: "true",
-                                projectId
-                            })
-                            
+
+                        await publishEnvelope(ServingToControl, {
+                            type: PROJECT_INITIALIZED,
+                            success: "true",
+                            projectId,
                         });
-                        
-                        await redis.xAdd(ServingToOrchestrator, "*", {
-                            data: JSON.stringify({
-                                type: PROJECT_CREATED,
-                                projectId,
-                                success: "true",
-                            })
+
+                        await publishEnvelope(ServingToOrchestrator, {
+                            type: PROJECT_CREATED,
+                            projectId,
+                            success: "true",
                         });
-                        console.log(`[${projectId}] PROJECT_CREATED sent to Orchestrator`);
-                    }catch(error){
+                        console.log(
+                            `[${projectId}] PROJECT_CREATED sent to Orchestrator`,
+                        );
+                    } catch (error) {
                         const errorMessage =
-                        error instanceof Error ? error.message : String(error);
+                            error instanceof Error
+                                ? error.message
+                                : String(error);
 
-                        // Sent failure to Control
-                        await redis.xAdd(ServingToControl, "*", {
-                            data:JSON.stringify({
-                                type: PROJECT_INITIALIZED,
-                                success: "false",
-                                payload: errorMessage,
-                                projectId: projectId!
-                            })
+                        await publishEnvelope(ServingToControl, {
+                            type: PROJECT_INITIALIZED,
+                            success: "false",
+                            payload: errorMessage,
+                            projectId,
                         });
 
-                        // Send failure to Orchestrator
-                        await redis.xAdd(ServingToOrchestrator, "*", {
-                            data: JSON.stringify({
-                                type: PROJECT_FAILED,
-                                projectId,
-                                payload: errorMessage,
-                            })
+                        await publishEnvelope(ServingToOrchestrator, {
+                            type: PROJECT_FAILED,
+                            projectId,
+                            payload: errorMessage,
                         });
-
-                        }
+                    }
                     break;
-                
+
                 case PROJECT_RUN:
                     await handleRunProject(projectId);
                     break;
-                    
+
                 default:
-                        console.log(
-                            `Received unknown message: ${type}} for project: ${projectId} from control pod`,
-                        );
-                        break;
+                    console.log(
+                        `Received unknown message: ${type} for project: ${projectId} from control pod`,
+                    );
+                    break;
             }
-    }
-    
+        },
+    });
 }
-}
 
-async function ListenOrchestator () {
-    console.log("Reading from Orchestator Stream")
-    let lastId = "$";
-
-    while(true){
-        const res = await orchReader.xRead(
-            [{ key: OrchestatorToServing, id: lastId }],
-            { BLOCK: 0 }
-            );
-        if (!res) continue;
-
-        //@ts-ignore
-        const messages = res[0]!.messages;
-        
-        for(const msg of messages){
-            lastId = msg.id;
-            const raw = msg.message?.data;
-            if (!raw) continue;
-
-            let msgFromOrch ;
-
-            try {
-                msgFromOrch = JSON.parse(raw);
-            } catch (err) {
-                console.error("Failed to parse orchestrator message:", raw);
-                continue;
-            }
-
+async function ListenOrchestator() {
+    await readGroupLoop({
+        stream: OrchestatorToServing,
+        group: StreamGroups.serve,
+        readerRole: "serveOrch",
+        handler: async (_id, fields) => {
+            const msgFromOrch = parseStreamFields(fields);
             const { projectId, type } = msgFromOrch;
 
             if (!projectId) {
                 console.warn("Orchestrator message missing projectId");
-                continue;
+                return;
             }
 
-            console.log(`[${projectId}] Received from orchestrator: ${type}`);
+            console.log(
+                `[${projectId}] Received from orchestrator: ${type}`,
+            );
 
-            switch(type){
+            switch (type) {
                 case PROJECT_RUN:
-                    await handleRunProject(projectId);
-                        break;
+                    await handleRunProject(projectId as string);
+                    break;
                 default:
-                    console.log(`Received unknown message: ${type}} for project: ${projectId} from control pod`,);
+                    console.log(
+                        `Received unknown message: ${type} for project: ${projectId} from orchestrator`,
+                    );
             }
-        }
-    }
+        },
+    });
 }
 
 async function shutdown(signal: string) {
     console.log(`Received ${signal}. Shutting down gracefully...`);
     try {
-        await redis.quit();
-        await controlReader.quit();
-        await orchReader.quit();
+        await RedisManager.quitAll();
         console.log("All Redis connections closed.");
     } catch (err) {
         console.error("Error during shutdown:", err);
@@ -245,27 +192,14 @@ async function shutdown(signal: string) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-
 async function main() {
-    await Promise.all([
-        redis.connect(),
-        controlReader.connect(),
-        orchReader.connect()
-    ]);
-
+    await RedisManager.getWriter();
     console.log("All Redis clients connected.");
-
     console.log("Serving POD Started");
-    await Promise.all([
-        ListenControl(),
-        ListenOrchestator()
-    ]);
+    await Promise.all([ListenControl(), ListenOrchestator()]);
 }
 
 main().catch((error) => {
     console.error("Fatal error in Serving POD:", error);
     process.exit(1);
 });
-
-
-

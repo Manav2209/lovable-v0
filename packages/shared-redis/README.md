@@ -1,15 +1,39 @@
 # shared-redis
 
-To install dependencies:
+Shared Redis client and stream helpers for the Lovable monorepo.
 
-```bash
-bun install
+## Consumer groups
+
+Use `readGroupLoop` for durable stream consumption:
+
+```ts
+import {
+  RedisManager,
+  readGroupLoop,
+  publishEnvelope,
+  parseStreamFields,
+  StreamGroups,
+} from "shared-redis";
+
+await readGroupLoop({
+  stream: "backend:orch",
+  group: StreamGroups.orch,
+  readerRole: "orchBackend",
+  handler: async (id, fields) => {
+    const msg = parseStreamFields(fields);
+    // handle; ack happens automatically on success
+  },
+});
 ```
 
-To run:
+Publish with a consistent envelope:
 
-```bash
-bun run index.ts
+```ts
+await publishEnvelope("orch:backend", {
+  type: "PROJECT_INITIALIZED",
+  projectId: "...",
+});
 ```
 
-This project was created using `bun init` in bun v1.2.8. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+Messages are stored as `{ data: JSON.stringify(envelope) }`.
+`parseStreamFields` also accepts legacy flat `type` / `payload` fields and `key` as an alias for `type`.

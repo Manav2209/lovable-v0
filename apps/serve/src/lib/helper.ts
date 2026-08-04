@@ -2,8 +2,8 @@ import { getObject, listObjects } from "r2";
 import fs from "fs";
 import path from "path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { PROJECT_FAILED, PROJECT_RUN_FAILED, PROJECT_RUN_SUCCESS, ServingToOrchestrator } from "types";
-import { redis } from "..";
+import { PROJECT_FAILED, PROJECT_RUN_FAILED, ServingToOrchestrator } from "types";
+import { publishEnvelope } from "shared-redis";
 
 const runningProcesses = new Map<string, ChildProcess>();
 
@@ -83,38 +83,32 @@ export const serveTheProject = async (
   const dir = path.join(sharedDir, projectId);
 
   if (!fs.existsSync(dir)) {
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_FAILED,
-        error: "Project directory not found",
-      })
-    })
+    await publishEnvelope(ServingToOrchestrator, {
+      projectId,
+      type: PROJECT_FAILED,
+      payload: "Project directory not found",
+    });
     return false;
   }
 
   const packageJsonPath = path.join(dir, "package.json");
   if (!fs.existsSync(packageJsonPath)) {
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_FAILED,
-        error: "package.json not found",
-      })
-    })
+    await publishEnvelope(ServingToOrchestrator, {
+      projectId,
+      type: PROJECT_FAILED,
+      payload: "package.json not found",
+    });
     return false;
   }
 
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
   const startScript = packageJson.scripts?.start;
   if (!startScript) {
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_FAILED,
-        error: "No start script in package.json",
-      })
-    })
+    await publishEnvelope(ServingToOrchestrator, {
+      projectId,
+      type: PROJECT_FAILED,
+      payload: "No start script in package.json",
+    });
     return false;
   }
 
@@ -152,14 +146,12 @@ export const serveTheProject = async (
 
   if (installCode !== 0) {
     console.error(`Failed to install dependencies for ${projectId}`);
-  
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_RUN_FAILED,
-        error: `Failed to install dependencies (exit code: ${installCode})`,
-      })
-    })
+
+    await publishEnvelope(ServingToOrchestrator, {
+      projectId,
+      type: PROJECT_RUN_FAILED,
+      payload: `Failed to install dependencies (exit code: ${installCode})`,
+    });
     return false;
   }
 
@@ -207,30 +199,19 @@ export const serveTheProject = async (
 
   if (checkCode === 0) {
     console.log(`Server is running on port ${port} for project ${projectId}`);
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_RUN_SUCCESS,
-        port,
-        url: `http://localhost:${port}`
-      })
-    })
+    // Success is also published by handleRunProject in index.ts after this returns.
+    // Avoid duplicate PROJECT_RUN_SUCCESS here.
 
     proc.on("close", async (code) => {
       console.log(`Server process for ${projectId} exited with code ${code}`);
       runningProcesses.delete(projectId);
 
       if (code !== 0) {
-
-        await redis.xAdd(ServingToOrchestrator , "*" , {
-          data: JSON.stringify({
-            projectId : projectId,
-            key: PROJECT_RUN_FAILED,
-            error: `Server process exited with code ${code}`,
-          })
-        })
-    
-        
+        await publishEnvelope(ServingToOrchestrator, {
+          projectId,
+          type: PROJECT_RUN_FAILED,
+          payload: `Server process exited with code ${code}`,
+        });
       }
     });
     return true;
@@ -241,13 +222,11 @@ export const serveTheProject = async (
     proc.kill();
     runningProcesses.delete(projectId);
 
-    await redis.xAdd(ServingToOrchestrator , "*" , {
-      data: JSON.stringify({
-        projectId : projectId,
-        key: PROJECT_RUN_FAILED,
-        error: `Server did not start on port ${port}`,
-      })
-    })
+    await publishEnvelope(ServingToOrchestrator, {
+      projectId,
+      type: PROJECT_RUN_FAILED,
+      payload: `Server did not start on port ${port}`,
+    });
 
     return false;
   }
