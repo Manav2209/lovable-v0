@@ -20,14 +20,12 @@ import {
     OrchestatorToServing,
 } from "types";
 
-import { createProjectPod } from "./handler/project";
-
 import type {
     BackendPayload,
     ControlMessage,
     ServingMessage,
 } from "./types";
-import { toK8sName } from "./lib";
+import { createProjectPod } from "./handler/project";
 import {
     RedisManager,
     publishEnvelope,
@@ -224,7 +222,7 @@ async function createProject(projectId: string) {
 
     if (!skipK8s) {
         try {
-            await createProjectPod(toK8sName(projectId));
+            await createProjectPod(projectId);
             console.log(`[${projectId}] K8s pod created`);
         } catch (err) {
             console.error(`[${projectId}] K8s pod creation failed:`, err);
@@ -304,6 +302,7 @@ async function runProject(projectId: string) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
                 type: PROJECT_RUN_SUCCESS,
+                payload: response.payload || "",
             });
             console.log(`[${projectId}] Run success forwarded`);
         } else if (response.type === PROJECT_RUN_FAILED) {

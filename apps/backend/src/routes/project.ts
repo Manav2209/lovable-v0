@@ -73,7 +73,11 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             return res.status(200).json({
                 success: true,
                 data: {
-                    url: `${projectId}.localhost:3000`,
+                    url:
+                        typeof runResponse.payload === "string" &&
+                        runResponse.payload.length > 0
+                            ? runResponse.payload
+                            : null,
                 },
                 error: null,
             });
