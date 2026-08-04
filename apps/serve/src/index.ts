@@ -9,6 +9,10 @@ import {
     PROJECT_FAILED,
     PROJECT_RUN_SUCCESS,
     PROJECT_RUN_FAILED,
+    PreviewRegister,
+    PREVIEW_REGISTER,
+    buildPreviewUrl,
+    toPreviewSlug,
 } from "types";
 import path from "path";
 import fs from "fs";
@@ -27,9 +31,54 @@ console.log("Serving POD started with env:", {
     BUCKET_NAME: process.env.BUCKET_NAME,
     REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
     SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
+    PREVIEW_DOMAIN: process.env.PREVIEW_DOMAIN || "preview.localhost",
 });
 
 export let projectRunning = false;
+
+function resolveUpstream(): string {
+    if (process.env.PREVIEW_UPSTREAM) {
+        return process.env.PREVIEW_UPSTREAM.replace(/\/$/, "");
+    }
+    const port = process.env.PORT || "3000";
+    return `http://127.0.0.1:${port}`;
+}
+
+async function registerPreview(projectId: string, upstream: string) {
+    const slug = toPreviewSlug(projectId);
+    const ingressAdmin =
+        process.env.INGRESS_ADMIN_URL || "http://127.0.0.1:8080";
+
+    try {
+        await publishEnvelope(PreviewRegister, {
+            type: PREVIEW_REGISTER,
+            projectId,
+            slug,
+            payload: upstream,
+        });
+    } catch (err) {
+        console.warn(`[${projectId}] Redis preview register failed:`, err);
+    }
+
+    try {
+        const res = await fetch(`${ingressAdmin}/_ingress/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId, slug, upstream }),
+        });
+        if (!res.ok) {
+            console.warn(
+                `[${projectId}] HTTP preview register failed:`,
+                await res.text(),
+            );
+        }
+    } catch (err) {
+        console.warn(
+            `[${projectId}] Ingress admin unreachable at ${ingressAdmin}:`,
+            err,
+        );
+    }
+}
 
 async function handleRunProject(projectId: string) {
     try {
@@ -44,12 +93,20 @@ async function handleRunProject(projectId: string) {
         console.log(`[${projectId}] Project is now running`);
         projectRunning = true;
 
+        const upstream = resolveUpstream();
+        await registerPreview(projectId, upstream);
+
+        const previewUrl =
+            process.env.PREVIEW_URL || buildPreviewUrl({ projectId });
+
         await publishEnvelope(ServingToOrchestrator, {
             type: PROJECT_RUN_SUCCESS,
             projectId,
-            payload: `${projectId}.localhost:3000`,
+            payload: previewUrl,
         });
-        console.log(`[${projectId}] Sent PROJECT_RUN_SUCCESS to orchestrator`);
+        console.log(
+            `[${projectId}] Sent PROJECT_RUN_SUCCESS url=${previewUrl}`,
+        );
     } catch (error) {
         const errorMessage =
             error instanceof Error ? error.message : String(error);

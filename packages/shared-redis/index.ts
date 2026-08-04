@@ -17,7 +17,8 @@ type RedisRole =
     | "controlOrch"
     | "controlServing"
     | "serveControl"
-    | "serveOrch";
+    | "serveOrch"
+    | "ingress";
 
 export type StreamFields = Record<string, string>;
 
@@ -266,4 +267,5 @@ export const StreamGroups = {
     backend: "backend",
     control: "control",
     serve: "serve",
+    ingress: "ingress",
 } as const;
