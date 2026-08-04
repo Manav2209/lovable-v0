@@ -4,14 +4,18 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev":"bun run ./src/index.ts"
+    "dev": "bun run ./src/index.ts"
   },
   "devDependencies": {
-    "shared-redis":"*",
-    "@types/bun": "latest",
-    "types":"*"
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "r2": "*",
+    "redis": "^5.10.0",
+    "shared-redis": "*",
+    "types": "*"
   }
 }

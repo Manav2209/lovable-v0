@@ -1,8 +1,8 @@
-import 'dotenv/config'
-import { 
-    BackendToOrchestator ,
-    OrchestatorToControl ,  
-    ControlToOrchestrator, 
+import "dotenv/config";
+import {
+    BackendToOrchestator,
+    OrchestatorToControl,
+    ControlToOrchestrator,
     CREATE_PROJECT,
     PROJECT_BUILD,
     PROJECT_RUN,
@@ -13,17 +13,28 @@ import {
     PROJECT_FAILED,
     PROJECT_RUN_SUCCESS,
     PROMPT_RESPONSE,
-    PROJECT_INITIALIZED, 
+    PROJECT_INITIALIZED,
     PROJECT_CREATED,
     PROJECT_RUN_FAILED,
     ServingToOrchestrator,
-    OrchestatorToServing} from "types";
+    OrchestatorToServing,
+} from "types";
 
 import { createProjectPod } from "./handler/project";
 
-import type { BackendPayload, ChatMessage, ControlMessage, ServingMessage} from "./types";
+import type {
+    BackendPayload,
+    ControlMessage,
+    ServingMessage,
+} from "./types";
 import { toK8sName } from "./lib";
-import {createClient } from "redis"
+import {
+    RedisManager,
+    publishEnvelope,
+    parseStreamFields,
+    readGroupLoop,
+    StreamGroups,
+} from "shared-redis";
 
 console.log("Orchestrator started with env:", {
     NODE_ENV: process.env.NODE_ENV,
@@ -31,19 +42,8 @@ console.log("Orchestrator started with env:", {
     SKIP_K8S: process.env.SKIP_K8S || "true",
 });
 
-// Two readers – one for each blocking stream
-const backendReader = createClient();
-const controlReader = createClient();
-const serverReader = createClient();
-
-
-// One writer – for all xAdd calls
-const writer = createClient();
-
-// we will store the response from Control and Server Pod
-// Project ->  resolver
-const serverResponses = new Map<string , (v: ServingMessage) => void>();
-const controlResponses = new Map<string , (v: ControlMessage ) => void>();
+const serverResponses = new Map<string, (v: ServingMessage) => void>();
+const controlResponses = new Map<string, (v: ControlMessage) => void>();
 
 function waitForServer(projectId: string, timeoutMs = 60_000) {
     return new Promise<ServingMessage>((resolve, reject) => {
@@ -58,8 +58,8 @@ function waitForServer(projectId: string, timeoutMs = 60_000) {
     });
 }
 
-function waitForControl(projectId: string , timeoutMs = 60_000) {
-    return new Promise<ControlMessage>((resolve , reject) => {
+function waitForControl(projectId: string, timeoutMs = 60_000) {
+    return new Promise<ControlMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
             controlResponses.delete(projectId);
             reject(new Error("Control pod timeout"));
@@ -69,90 +69,88 @@ function waitForControl(projectId: string , timeoutMs = 60_000) {
             clearTimeout(timer);
             resolve(value);
         });
-
     });
 }
 
 async function ListenBackend() {
+    await readGroupLoop({
+        stream: BackendToOrchestator,
+        group: StreamGroups.orch,
+        readerRole: "orchBackend",
+        handler: async (_id, fields) => {
+            const envelope = parseStreamFields(fields);
+            const type = envelope.type;
 
-    console.log("Listening on stream:", BackendToOrchestator);
-    let lastId = "$";
-    while (true) {
-        const response = await backendReader.xRead(
-            [{
-                key: BackendToOrchestator,
-                id: lastId,
-            }],
-            {
-                BLOCK: 0 
-            });
-    if (!response) continue;
-    //@ts-ignore
-    const messages = response[0]!.messages;
-        for (const msg of messages) {
-            lastId = msg.id;
-            const  msgfromBackend  = msg.message as ChatMessage
-            const type = msgfromBackend.type  as string;
-            const payloadRaw = msg.message.payload as string;
+            // Legacy backend wrote flat type + payload JSON string;
+            // new writers use { data: { type, projectId, ... } } or nested payload object.
+            let payload: BackendPayload;
+            if (
+                envelope.payload &&
+                typeof envelope.payload === "object" &&
+                envelope.payload !== null &&
+                "projectId" in (envelope.payload as object)
+            ) {
+                payload = envelope.payload as BackendPayload;
+            } else if (envelope.projectId) {
+                payload = {
+                    projectId: envelope.projectId as string,
+                    jobId: (envelope.jobId as string) || "",
+                    userId: (envelope.userId as string) || "",
+                    prompt:
+                        typeof envelope.prompt === "string"
+                            ? envelope.prompt
+                            : typeof envelope.payload === "string"
+                              ? envelope.payload
+                              : undefined,
+                };
+            } else if (typeof envelope.payload === "string") {
+                payload = JSON.parse(envelope.payload) as BackendPayload;
+            } else {
+                console.error("[orch] Unrecognized backend message:", envelope);
+                return;
+            }
 
-            const payload = JSON.parse(payloadRaw) as BackendPayload;
-            console.log(payload)
-            const { projectId , jobId , prompt, userId} = payload;
-            switch(type){
+            console.log(payload);
+            const { projectId, prompt } = payload;
+
+            switch (type) {
                 case CREATE_PROJECT:
                     createProject(projectId).catch(console.error);
                     break;
-
                 case PROJECT_BUILD:
-                    buildProject(projectId).catch(console.error)
+                    buildProject(projectId).catch(console.error);
                     break;
-                    
-                case PROJECT_RUN :
-                    runProject(projectId).catch(console.error)
+                case PROJECT_RUN:
+                    runProject(projectId).catch(console.error);
                     break;
-
                 case PROMPT:
                     if (!prompt) {
                         console.log(`[${projectId}] Prompt missing payload`);
                         break;
                     }
-                    handlePrompt(projectId, prompt!).catch(console.error);
+                    handlePrompt(projectId, prompt).catch(console.error);
                     break;
-            } 
-        }
-    }
+                default:
+                    console.log(`[orch] Unknown backend type: ${type}`);
+            }
+        },
+    });
 }
 
 async function ListenControlPod() {
-    let lastId = "$";
-
-    while(true){
-        const res = await controlReader.xRead(
-            [{ key: ControlToOrchestrator, id: lastId }],
-            { BLOCK: 0 }
-        );
-        if (!res) continue;
-        console.log(res);
-        //@ts-ignore
-        for (const msg of res[0]!.messages) {
-            lastId = msg.id;
-
-            const raw = msg.message?.data;
-            if (!raw) continue;
-            let data: any
-            try {
-                data = JSON.parse(raw);
-                console.log(data);
-            } catch (e) {
-                console.error("Failed to parse control message:", raw);
-                continue;
-            }
+    await readGroupLoop({
+        stream: ControlToOrchestrator,
+        group: StreamGroups.orch,
+        readerRole: "orchControl",
+        handler: async (_id, fields) => {
+            const data = parseStreamFields(fields) as ControlMessage & {
+                type: string;
+                projectId: string;
+            };
             const { projectId, type } = data;
-            if (!projectId) continue;
+            if (!projectId) return;
             console.log(`[${projectId}] Received ${type} from control`);
 
-             // Only resolve pending promises for non‑initialisation types
-            // (we no longer wait for PROJECT_INITIALIZED from control)
             if (type !== PROJECT_INITIALIZED) {
                 const resolver = controlResponses.get(projectId);
                 if (resolver) {
@@ -160,44 +158,31 @@ async function ListenControlPod() {
                     controlResponses.delete(projectId);
                 }
             }
-            // If we ever needed to forward initialisation from control, we would do it here,
-            // but now it's handled by serving → orchestrator.
-        }
-    }    
+        },
+    });
 }
 
+async function ListenServingPod() {
+    await readGroupLoop({
+        stream: ServingToOrchestrator,
+        group: StreamGroups.orch,
+        readerRole: "orchServing",
+        handler: async (_id, fields) => {
+            const data = parseStreamFields(fields) as ServingMessage & {
+                type: string;
+                projectId: string;
+                payload?: string;
+            };
+            const { projectId, type, payload } = data;
+            if (!projectId || !type) return;
 
-async function ListenServingPod(){
-    let lastId = "$";
-
-    while(true){
-        try{
-        const res = await serverReader.xRead(
-            [{ key: ServingToOrchestrator, id: lastId }],
-            { BLOCK: 0 }
-        );
-        if(!res) continue;
-        console.log(res);
-
-        //@ts-ignore
-        for (const msg of res[0]!.messages) {
-            lastId = msg.id;
-
-            const raw = msg.message?.data;
-            if (!raw) continue;
-            let data: any;
-            try {
-                data = JSON.parse(raw);
-            } catch (e) {
-                console.error("Failed to parse serving message:", raw);
-                continue;
-            }
-            const { projectId, type, success, payload } = data;
-            if (!projectId) continue;
             console.log(`[${projectId}] Received ${type} from serving`);
-        
-            // 1. Resolve waiting promise (for RUN)
-            const validRunTypes = [PROJECT_RUN_SUCCESS, PROJECT_RUN_FAILED, PROJECT_FAILED];
+
+            const validRunTypes = [
+                PROJECT_RUN_SUCCESS,
+                PROJECT_RUN_FAILED,
+                PROJECT_FAILED,
+            ];
             if (validRunTypes.includes(type)) {
                 const resolver = serverResponses.get(projectId);
                 if (resolver) {
@@ -205,35 +190,35 @@ async function ListenServingPod(){
                     serverResponses.delete(projectId);
                 }
             }
-            // 2. Forward relevant messages to backend
+
             switch (type) {
                 case PROJECT_CREATED:
-                    await writer.xAdd(OrchestatorToBackend, "*", {
-                        data: JSON.stringify({ projectId, type: PROJECT_INITIALIZED })
+                    await publishEnvelope(OrchestatorToBackend, {
+                        projectId,
+                        type: PROJECT_INITIALIZED,
                     });
-                    console.log(`[${projectId}] Forwarded PROJECT_CREATED as PROJECT_INITIALIZED to backend`);
+                    console.log(
+                        `[${projectId}] Forwarded PROJECT_CREATED as PROJECT_INITIALIZED to backend`,
+                    );
                     break;
                 case PROJECT_FAILED:
-                    await writer.xAdd(OrchestatorToBackend, "*", {
-                        data: JSON.stringify({ projectId, type: PROJECT_FAILED, payload: payload || "" })
+                    await publishEnvelope(OrchestatorToBackend, {
+                        projectId,
+                        type: PROJECT_FAILED,
+                        payload: payload || "",
                     });
-                    console.log(`[${projectId}] Forwarded PROJECT_FAILED to backend`);
+                    console.log(
+                        `[${projectId}] Forwarded PROJECT_FAILED to backend`,
+                    );
                     break;
                 default:
                     break;
-                }
             }
-        }catch(err){
-            console.error("Error in ListenServingPod:", err);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-    }
-
+        },
+    });
 }
 
-
 async function createProject(projectId: string) {
-    
     const skipK8s = process.env.SKIP_K8S?.toLowerCase() === "true";
     console.log(`[${projectId}] SKIP_K8S = ${skipK8s}`);
 
@@ -243,126 +228,144 @@ async function createProject(projectId: string) {
             console.log(`[${projectId}] K8s pod created`);
         } catch (err) {
             console.error(`[${projectId}] K8s pod creation failed:`, err);
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_FAILED, payload: String(err) })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_FAILED,
+                payload: String(err),
             });
-            return; // <-- stop here
+            return;
         }
     } else {
-        console.log(`[${projectId}] Skipping K8s pod creation (SKIP_K8S=true)`);
+        console.log(
+            `[${projectId}] Skipping K8s pod creation (SKIP_K8S=true)`,
+        );
     }
 
-    // Fire‑and‑forget to control
-    await writer.xAdd(OrchestatorToControl, "*", {
-        data: JSON.stringify({ type: PROJECT_INITIALIZED, projectId })
+    await publishEnvelope(OrchestatorToControl, {
+        type: PROJECT_INITIALIZED,
+        projectId,
     });
-    console.log(`[${projectId}] PROJECT_INITIALIZED sent to control, waiting for async response from serving`);
+    console.log(
+        `[${projectId}] PROJECT_INITIALIZED sent to control, waiting for async response from serving`,
+    );
 }
-async function buildProject(projectId: string){
+
+async function buildProject(projectId: string) {
     console.log("BUILD_PROJECT is being called");
-    
-    await writer.xAdd(OrchestatorToControl, "*", {
-        data: JSON.stringify({
-            projectId,
-            type: PROJECT_BUILD
-        })
+
+    await publishEnvelope(OrchestatorToControl, {
+        projectId,
+        type: PROJECT_BUILD,
     });
-    
+
     try {
         const response = await waitForControl(projectId);
         if (response.type === PROJECT_BUILD_SUCCESS) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_BUILD_SUCCESS })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_BUILD_SUCCESS,
             });
             console.log(`[${projectId}] Build success forwarded`);
         } else if (response.type === PROJECT_BUILD_FAILED) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_BUILD_FAILED, payload: response.payload || "" })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_BUILD_FAILED,
+                payload: response.payload || "",
             });
             console.log(`[${projectId}] Build failed forwarded`);
         } else if (response.type === PROJECT_FAILED) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_FAILED, payload: response.payload || "" })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_FAILED,
+                payload: response.payload || "",
             });
         }
     } catch (err) {
         console.error(`[${projectId}] Build timeout or error:`, err);
-        await writer.xAdd(OrchestatorToBackend, "*", {
-            data: JSON.stringify({ projectId, type: PROJECT_BUILD_FAILED, payload: String(err) })
+        await publishEnvelope(OrchestatorToBackend, {
+            projectId,
+            type: PROJECT_BUILD_FAILED,
+            payload: String(err),
         });
     }
-
-
 }
 
-async function runProject(projectId : string) {
+async function runProject(projectId: string) {
     console.log(`[${projectId}] RUN_PROJECT called`);
 
-    await writer.xAdd(OrchestatorToServing, "*", {
-        data: JSON.stringify({
-            projectId,
-            type: PROJECT_RUN
-        })
+    await publishEnvelope(OrchestatorToServing, {
+        projectId,
+        type: PROJECT_RUN,
     });
 
     try {
         const response = await waitForServer(projectId);
         if (response.type === PROJECT_RUN_SUCCESS) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_RUN_SUCCESS })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_RUN_SUCCESS,
             });
             console.log(`[${projectId}] Run success forwarded`);
         } else if (response.type === PROJECT_RUN_FAILED) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_RUN_FAILED, payload: response.payload || "" })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_RUN_FAILED,
+                payload: response.payload || "",
             });
             console.log(`[${projectId}] Run failed forwarded`);
         } else if (response.type === PROJECT_FAILED) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROJECT_FAILED, payload: response.payload || "" })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROJECT_FAILED,
+                payload: response.payload || "",
             });
         }
     } catch (err) {
         console.error(`[${projectId}] Run timeout or error:`, err);
-        await writer.xAdd(OrchestatorToBackend, "*", {
-            data: JSON.stringify({ projectId, type: PROJECT_RUN_FAILED, payload: String(err) })
+        await publishEnvelope(OrchestatorToBackend, {
+            projectId,
+            type: PROJECT_RUN_FAILED,
+            payload: String(err),
         });
     }
-
 }
 
-async function handlePrompt( projectId : string , prompt: string) {
+async function handlePrompt(projectId: string, prompt: string) {
     console.log(`[${projectId}] PROMPT called`);
-    await writer.xAdd(OrchestatorToControl, "*", {
-        data: JSON.stringify({ projectId, type: PROMPT, payload: prompt })
+    await publishEnvelope(OrchestatorToControl, {
+        projectId,
+        type: PROMPT,
+        payload: prompt,
     });
 
     try {
         const response = await waitForControl(projectId);
         if (response.type === PROMPT_RESPONSE) {
-            await writer.xAdd(OrchestatorToBackend, "*", {
-                data: JSON.stringify({ projectId, type: PROMPT_RESPONSE, payload: response.payload || "" })
+            await publishEnvelope(OrchestatorToBackend, {
+                projectId,
+                type: PROMPT_RESPONSE,
+                payload: response.payload || "",
             });
             console.log(`[${projectId}] Prompt response forwarded`);
         } else {
-            console.log(`[${projectId}] Unexpected prompt response: ${response.type}`);
+            console.log(
+                `[${projectId}] Unexpected prompt response: ${response.type}`,
+            );
         }
     } catch (err) {
         console.error(`[${projectId}] Prompt timeout or error:`, err);
-        await writer.xAdd(OrchestatorToBackend, "*", {
-            data: JSON.stringify({ projectId, type: PROMPT_RESPONSE, payload: "Error: " + String(err) })
+        await publishEnvelope(OrchestatorToBackend, {
+            projectId,
+            type: PROMPT_RESPONSE,
+            payload: "Error: " + String(err),
         });
     }
-    
 }
 
 async function shutdown(signal: string) {
     console.log(`Received ${signal}. Shutting down gracefully...`);
     try {
-        await writer.quit();
-        await backendReader.quit();
-        await controlReader.quit();
-        await serverReader.quit();
+        await RedisManager.quitAll();
         console.log("All Redis connections closed.");
     } catch (err) {
         console.error("Error during shutdown:", err);
@@ -373,16 +376,9 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main() {
-
-    await Promise.all([
-        serverReader.connect(),
-        backendReader.connect(),
-        controlReader.connect(),
-        writer.connect()
-    ]);
+    await RedisManager.getWriter();
     console.log("All Redis clients connected.");
 
-    // Start all listeners concurrently
     await Promise.all([
         ListenBackend(),
         ListenControlPod(),

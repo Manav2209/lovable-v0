@@ -8,10 +8,8 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "shared-redis": "*",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "types": "*",
     "typescript": "^5.9.2"
   },
   "peerDependencies": {
@@ -19,6 +17,9 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
-    "@types/redis": "^4.0.11"
+    "dotenv": "^17.2.3",
+    "redis": "^5.10.0",
+    "shared-redis": "*",
+    "types": "*"
   }
 }
