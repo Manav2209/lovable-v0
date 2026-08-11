@@ -52,9 +52,11 @@ YOUR WORKFLOW - FOLLOW THIS STRICTLY:
    - ALWAYS start with: listDir, readFile for package.json, readFile for App.tsx
 2. ANALYZE: Understand what's already there and what needs to change
 3. PLAN BEAUTIFUL UI: Include gradients, shadows, animations, hover effects, and modern design in all components
-3. PLAN: Create modifications based on existing structure
-4. MODIFY: Use updateFile for existing files, createFile ONLY for new files
-5. DO NOT: Create new project, reinstall existing packages, or ignore existing structure
+4. PLAN: Create modifications based on existing structure
+5. MODIFY: Use updateFile for existing files, createFile ONLY for new files
+6. FINAL: ALWAYS update src/App.tsx to import and render every new page/section component. Never leave the Hello World template visible.
+7. DO NOT: Create new project, reinstall existing packages, or ignore existing structure
+8. Use real lucide-react icon names only; do not invent icons. Do not add unused React imports.
 
 OPTIMIZATION & STRUCTURE RULES:
 1. **Distributed Components**: Break down large components into smaller, reusable sub-components.

@@ -46,6 +46,8 @@ type ReadGroupLoopOptions = {
     blockMs?: number;
     count?: number;
     backoffMs?: number;
+    /** Stream ID to start from when creating the group. Default "$" (new messages only). */
+    startId?: "$" | "0";
 };
 
 export class RedisManager {
@@ -131,11 +133,14 @@ export function defaultConsumerName(prefix = "c"): string {
 export async function ensureConsumerGroup(
     stream: string,
     group: string,
+    startId: "$" | "0" = "$",
 ): Promise<void> {
     const client = await RedisManager.getWriter();
     try {
-        await client.xGroupCreate(stream, group, "0", { MKSTREAM: true });
-        console.log(`[Redis] Created consumer group "${group}" on ${stream}`);
+        await client.xGroupCreate(stream, group, startId, { MKSTREAM: true });
+        console.log(
+            `[Redis] Created consumer group "${group}" on ${stream} (start=${startId})`,
+        );
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("BUSYGROUP")) {
@@ -221,10 +226,11 @@ export async function readGroupLoop(
         blockMs = 5000,
         count = 10,
         backoffMs = 1000,
+        startId = "$",
     } = options;
     const consumer = options.consumer ?? defaultConsumerName(group);
 
-    await ensureConsumerGroup(stream, group);
+    await ensureConsumerGroup(stream, group, startId);
     const reader = await RedisManager.getReader(readerRole);
 
     console.log(

@@ -9,6 +9,7 @@ import { Link, useParams } from "react-router-dom";
 import { TopBar } from "@/components/Brand";
 import {
   api,
+  getToken,
   type ConversationMessage,
   type ProjectDetail,
 } from "@/lib/api";
@@ -26,11 +27,19 @@ function toSseConnectUrl(sseUrl: string, projectId: string): string {
     if (!url.searchParams.get("id")) {
       url.searchParams.set("id", projectId);
     }
+    const token = getToken();
+    if (token && !url.searchParams.get("token")) {
+      url.searchParams.set("token", token);
+    }
     return url.toString();
   } catch {
-    return sseUrl.includes("?")
+    const token = getToken();
+    const withId = sseUrl.includes("?")
       ? `${sseUrl}&id=${projectId}`
       : `${sseUrl}?id=${projectId}`;
+    return token && !withId.includes("token=")
+      ? `${withId}&token=${encodeURIComponent(token)}`
+      : withId;
   }
 }
 
@@ -74,6 +83,20 @@ export function WorkspacePage() {
     };
   }, [loadProject]);
 
+  // Subscribe to agent live events (including auto initial-prompt after create).
+  useEffect(() => {
+    if (!projectId || loading) return;
+    const token = getToken();
+    if (!token) return;
+    attachSse(
+      `/api/v1/project/${projectId}/events?token=${encodeURIComponent(token)}`,
+    );
+    return () => {
+      esRef.current?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, loading]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [project?.conversationHistory, events]);
@@ -86,10 +109,17 @@ export function WorkspacePage() {
 
     es.onmessage = (msg) => {
       try {
-        const data = JSON.parse(msg.data) as AgentEvent;
+        const data = JSON.parse(msg.data) as AgentEvent & { url?: string };
+        if (data.type === "connected") return;
         setEvents((prev) => [...prev, data]);
-        if (data.type === "completed" || data.type === "error") {
-          es.close();
+        if (data.type === "preview_ready" && data.url) {
+          setPreviewUrl(data.url);
+          setIframeKey((k) => k + 1);
+        }
+        if (data.type === "completed") {
+          void loadProject();
+        }
+        if (data.type === "error") {
           void loadProject();
         }
       } catch {
@@ -101,15 +131,18 @@ export function WorkspacePage() {
     };
 
     es.onerror = () => {
-      setEvents((prev) => [
-        ...prev,
-        {
-          type: "sse_error",
-          message:
-            "SSE connection failed (preview/agent stream may need port-forward or ingress).",
-        },
-      ]);
-      es.close();
+      // EventSource retries; only surface a soft note once connection drops hard.
+      setEvents((prev) => {
+        if (prev.some((e) => e.type === "sse_error")) return prev;
+        return [
+          ...prev,
+          {
+            type: "sse_error",
+            message:
+              "SSE connection interrupted — retrying live status…",
+          },
+        ];
+      });
     };
   }
 

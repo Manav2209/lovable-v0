@@ -13,6 +13,7 @@ import {
     PREVIEW_REGISTER,
     buildPreviewUrl,
     toPreviewSlug,
+    agentSseChannel,
 } from "types";
 import path from "path";
 import fs from "fs";
@@ -107,6 +108,20 @@ async function handleRunProject(projectId: string) {
         console.log(
             `[${projectId}] Sent PROJECT_RUN_SUCCESS url=${previewUrl}`,
         );
+
+        try {
+            const redis = await RedisManager.getWriter();
+            await redis.publish(
+                agentSseChannel(projectId),
+                JSON.stringify({
+                    type: "preview_ready",
+                    message: "Preview is ready",
+                    url: previewUrl,
+                }),
+            );
+        } catch (err) {
+            console.warn(`[${projectId}] Failed to publish preview_ready SSE:`, err);
+        }
     } catch (error) {
         const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -121,10 +136,16 @@ async function handleRunProject(projectId: string) {
     }
 }
 
+const MY_PROJECT_ID = process.env.PROJECT_ID || "";
+
 async function ListenControl() {
+    const group = MY_PROJECT_ID
+        ? `${StreamGroups.serve}-${MY_PROJECT_ID}`
+        : StreamGroups.serve;
+
     await readGroupLoop({
         stream: ControlToServing,
-        group: StreamGroups.serve,
+        group,
         readerRole: "serveControl",
         handler: async (_id, fields) => {
             const msgFromControl = parseStreamFields(fields);
@@ -133,6 +154,10 @@ async function ListenControl() {
 
             if (!projectId) {
                 console.warn("Control message missing projectId");
+                return;
+            }
+
+            if (MY_PROJECT_ID && projectId !== MY_PROJECT_ID) {
                 return;
             }
 
@@ -205,9 +230,13 @@ async function ListenControl() {
 }
 
 async function ListenOrchestator() {
+    const group = MY_PROJECT_ID
+        ? `${StreamGroups.serve}-${MY_PROJECT_ID}`
+        : StreamGroups.serve;
+
     await readGroupLoop({
         stream: OrchestatorToServing,
-        group: StreamGroups.serve,
+        group,
         readerRole: "serveOrch",
         handler: async (_id, fields) => {
             const msgFromOrch = parseStreamFields(fields);
@@ -215,6 +244,10 @@ async function ListenOrchestator() {
 
             if (!projectId) {
                 console.warn("Orchestrator message missing projectId");
+                return;
+            }
+
+            if (MY_PROJECT_ID && projectId !== MY_PROJECT_ID) {
                 return;
             }
 
@@ -253,7 +286,10 @@ async function main() {
     await RedisManager.getWriter();
     console.log("All Redis clients connected.");
     console.log("Serving POD Started");
-    await Promise.all([ListenControl(), ListenOrchestator()]);
+
+    void ListenControl();
+    void ListenOrchestator();
+    await new Promise(() => {});
 }
 
 main().catch((error) => {

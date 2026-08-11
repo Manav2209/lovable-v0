@@ -305,33 +305,37 @@ export const SYSTEM_PROMPTS = {
 
   ## CRITICAL RULES:
   1. ALWAYS start with listDir and readFile to understand existing structure
-  2. PREFER lineReplace over updateFile for editing existing files
-  3. Use ellipsis ("...") in lineReplace search when omitting large sections
-  4. Generate COMPLETE code in every updateFile/createFile call - no placeholders
-  5. Include ALL imports, ALL logic, ALL JSX in each file
-  6. Use existing shadcn/ui components: Button, Card, Input, Label, Textarea from @/components/ui/
-  7. Use Lucide icons: import { IconName} from "lucide-react"
-  8. Use Tailwind CSS with design system tokens (not hardcoded colors)
-  9. Follow React best practices: functional components, hooks, proper state management
-  10. Create distributed components (break large files into smaller ones)
+  2. Main entry is src/App.tsx (TypeScript) — NOT App.jsx
+  3. PREFER lineReplace over updateFile for editing existing files
+  4. Use ellipsis ("...") in lineReplace search when omitting large sections
+  5. Generate COMPLETE code in every updateFile/createFile call - no placeholders
+  6. Include ALL imports, ALL logic, ALL JSX in each file
+  7. Use existing shadcn/ui components: Button, Card, Input, Label, Textarea from @/components/ui/
+  8. Use ONLY real Lucide icons that exist (e.g. Pottery → Flame/CupSoda/Package). NEVER invent icon names like IconPottery
+  9. Do NOT import React just for JSX (React 19 + vite). Avoid unused imports that break tsc
+  10. Use Tailwind CSS with design system tokens (not hardcoded colors)
+  11. Follow React best practices: functional components, hooks, proper state management
+  12. Create distributed components (break large files into smaller ones)
+  13. **MANDATORY FINAL STEP — STITCH TO MAIN PAGE**: After creating any components under src/components/ or src/pages/, you MUST update src/App.tsx to import and render them. Leaving the template "Hello World" Button is a FAILURE. The last toolCalls MUST include an updateFile (or lineReplace) on src/App.tsx that composes the new UI so the preview shows the full page.
   
   ## Example for "add dark mode toggle":
   {
     "plan": "Implement dark mode with theme toggle using lineReplace for efficiency",
     "toolCalls": [
-      {"tool": "readFile", "args": {"filePath": "src/App.jsx"}},
+      {"tool": "readFile", "args": {"filePath": "src/App.tsx"}},
       {"tool": "lineReplace", "args": {
-        "filePath": "src/App.jsx",
-        "search": "import React from 'react'\\n...\\nfunction App() {",
+        "filePath": "src/App.tsx",
+        "search": "import './App.css'\\n...\\nfunction App() {",
         "firstReplacedLine": 1,
         "lastReplacedLine": 5,
-        "replace": "import { useState, useEffect } from 'react'\\nimport { Button } from './components/ui/button'\\nimport { Moon, Sun } from 'lucide-react'\\n\\nfunction App() {"
+        "replace": "import './App.css'\\nimport { useState } from 'react'\\nimport { Button } from './components/ui/button'\\nimport { Moon, Sun } from 'lucide-react'\\n\\nfunction App() {"
       }}
     ]
   }
   
   CRITICAL: Return ONLY valid JSON. Include COMPLETE working code in every file operation.
   Prefer lineReplace for modifications. Use design system tokens. Create beautiful, distributed components.
+  ALWAYS end by wiring everything into src/App.tsx.
   `,
   
     BUILDER_PROMPT: `

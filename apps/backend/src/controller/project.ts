@@ -57,9 +57,10 @@ export const createProject = async (req: Request, res: Response) => {
         projectId,
         jobId,
         userId: req.userId!,
+        prompt: data.prompt,
     });
     try {
-        const result = await responseManager.wait(projectId, 30_000);
+        const result = await responseManager.wait(projectId, 120_000);
         const parsed = JSON.parse(result);
 
         if (parsed.type === PROJECT_INITIALIZED) {
@@ -175,14 +176,19 @@ export const createConversation = async (req: Request, res: Response) => {
     });
 
     try {
-        const response = await responseManager.wait(projectId!, 60_000);
+        const response = await responseManager.wait(projectId!, 600_000);
         const parsed = JSON.parse(response);
 
         if (parsed.type === PROMPT_RESPONSE) {
+            const token =
+                typeof req.headers.authorization === "string"
+                    ? req.headers.authorization.replace(/^Bearer\s+/i, "")
+                    : "";
+            const sseUrl = `/api/v1/project/${projectId}/events?token=${encodeURIComponent(token)}`;
             return res.status(200).json({
                 success: true,
                 data: {
-                    sseUrl: parsed.payload,
+                    sseUrl,
                 },
                 error: null,
             });

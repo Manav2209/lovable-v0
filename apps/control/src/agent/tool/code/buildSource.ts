@@ -145,9 +145,8 @@ export async function runNode(state: WorkflowState): Promise<Partial<WorkflowSta
   await buildSource.invoke({ projectId: state.projectId });
 
   await redis.xAdd(ControlToServing , "*" , {
-    key: state.projectId,
     data: JSON.stringify({
-      key: PROJECT_RUN,
+      type: PROJECT_RUN,
       projectId: state.projectId,
     }),
   })

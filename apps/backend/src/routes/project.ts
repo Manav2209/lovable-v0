@@ -21,6 +21,7 @@ import {
     getProject,
     getProjectById,
 } from "../controller/project";
+import { projectEvents } from "../controller/events";
 import { responseManager } from "../lib/responseManager";
 
 export const projectRouter = Router();
@@ -30,6 +31,8 @@ projectRouter.post("/project", authMiddleware, createProject);
 projectRouter.get("/projects", authMiddleware, getProject);
 
 projectRouter.get("/project/:projectId", authMiddleware, getProjectById);
+
+projectRouter.get("/project/:projectId/events", projectEvents);
 
 projectRouter.post(
     "/project/conversation/:projectId",
@@ -66,7 +69,7 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             userId: req.userId!,
         });
 
-        const runRes = await responseManager.wait(projectId!, 60_000);
+        const runRes = await responseManager.wait(projectId!, 600_000);
         const runResponse = JSON.parse(runRes);
 
         if (runResponse.type === PROJECT_RUN_SUCCESS) {
@@ -142,7 +145,7 @@ projectRouter.post(
         });
 
         try {
-            const buildRes = await responseManager.wait(projectId!, 60_000);
+            const buildRes = await responseManager.wait(projectId!, 600_000);
             const buildResponse = JSON.parse(buildRes);
 
             if (buildResponse.type === PROJECT_BUILD_SUCCESS) {
