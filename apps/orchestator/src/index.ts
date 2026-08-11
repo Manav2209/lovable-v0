@@ -25,7 +25,7 @@ import type {
     ControlMessage,
     ServingMessage,
 } from "./types";
-import { createProjectPod } from "./handler/project";
+import { createProjectPod, registerHostIngressRoute } from "./handler/project";
 import {
     RedisManager,
     publishEnvelope,
@@ -42,8 +42,10 @@ console.log("Orchestrator started with env:", {
 
 const serverResponses = new Map<string, (v: ServingMessage) => void>();
 const controlResponses = new Map<string, (v: ControlMessage) => void>();
+/** Initial create prompts to run automatically after PROJECT_CREATED */
+const pendingInitialPrompts = new Map<string, string>();
 
-function waitForServer(projectId: string, timeoutMs = 60_000) {
+function waitForServer(projectId: string, timeoutMs = 600_000) {
     return new Promise<ServingMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
             serverResponses.delete(projectId);
@@ -56,7 +58,7 @@ function waitForServer(projectId: string, timeoutMs = 60_000) {
     });
 }
 
-function waitForControl(projectId: string, timeoutMs = 60_000) {
+function waitForControl(projectId: string, timeoutMs = 600_000) {
     return new Promise<ControlMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
             controlResponses.delete(projectId);
@@ -113,6 +115,9 @@ async function ListenBackend() {
 
             switch (type) {
                 case CREATE_PROJECT:
+                    if (prompt) {
+                        pendingInitialPrompts.set(projectId, prompt);
+                    }
                     createProject(projectId).catch(console.error);
                     break;
                 case PROJECT_BUILD:
@@ -154,6 +159,22 @@ async function ListenControlPod() {
                 if (resolver) {
                     resolver(data);
                     controlResponses.delete(projectId);
+                } else if (
+                    type === PROJECT_BUILD_SUCCESS ||
+                    type === PROJECT_BUILD_FAILED ||
+                    type === PROJECT_FAILED ||
+                    type === PROMPT_RESPONSE
+                ) {
+                    // Late reply after HTTP waiter timed out — still notify backend.
+                    await publishEnvelope(OrchestatorToBackend, {
+                        projectId,
+                        type,
+                        payload: data.payload || "",
+                        success: data.success,
+                    });
+                    console.log(
+                        `[${projectId}] Late ${type} forwarded to backend (no waiter)`,
+                    );
                 }
             }
         },
@@ -186,7 +207,21 @@ async function ListenServingPod() {
                 if (resolver) {
                     resolver(data);
                     serverResponses.delete(projectId);
+                } else {
+                    await publishEnvelope(OrchestatorToBackend, {
+                        projectId,
+                        type,
+                        payload: payload || "",
+                    });
+                    console.log(
+                        `[${projectId}] Late ${type} forwarded to backend (no waiter)`,
+                    );
                 }
+            }
+
+            if (type === PROJECT_RUN_SUCCESS) {
+                // Ensure host ingress points at localhost NodePort (not cluster DNS).
+                await registerHostIngressRoute(projectId).catch(console.error);
             }
 
             switch (type) {
@@ -198,6 +233,21 @@ async function ListenServingPod() {
                     console.log(
                         `[${projectId}] Forwarded PROJECT_CREATED as PROJECT_INITIALIZED to backend`,
                     );
+                    {
+                        const initialPrompt = pendingInitialPrompts.get(projectId);
+                        if (initialPrompt) {
+                            pendingInitialPrompts.delete(projectId);
+                            console.log(
+                                `[${projectId}] Auto-running initial prompt after create`,
+                            );
+                            // Brief delay so the workspace can open and attach SSE first.
+                            setTimeout(() => {
+                                handlePrompt(projectId, initialPrompt).catch(
+                                    console.error,
+                                );
+                            }, 2500);
+                        }
+                    }
                     break;
                 case PROJECT_FAILED:
                     await publishEnvelope(OrchestatorToBackend, {

@@ -1,7 +1,9 @@
 import http from "http";
 import { parse } from "url";
+import { agentSseChannel } from "types";
+import { RedisManager } from "shared-redis";
 
-const SSE_PORT = 3001;
+const SSE_PORT = Number(process.env.SSE_PORT || 3001);
 const SSE_HOST = "0.0.0.0";
 
 interface SSEClient {
@@ -10,10 +12,23 @@ interface SSEClient {
 }
 
 let sseServer: http.Server | null = null;
-// <clientId , SSEClient>
 const clients = new Map<string, SSEClient>();
-// <projectID , URL >
 const projectSSEUrls = new Map<string, string>();
+
+function buildPublicSseUrl(projectId: string): string {
+    const previewUrl = process.env.PREVIEW_URL;
+    if (previewUrl) {
+        try {
+            const u = new URL(previewUrl);
+            u.pathname = "/sse";
+            u.search = `id=${encodeURIComponent(projectId)}`;
+            return u.toString();
+        } catch {
+            /* fall through */
+        }
+    }
+    return `http://localhost:${SSE_PORT}/sse?id=${encodeURIComponent(projectId)}`;
+}
 
 export function startSSEServer(): string {
     if (sseServer) {
@@ -22,49 +37,56 @@ export function startSSEServer(): string {
 
     sseServer = http.createServer((req, res) => {
         if (req.method === "OPTIONS") {
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Cache-Control",
-        });
-        res.end();
-        return;
-        }
-
-    const { pathname, query } = parse(req.url || "", true);
-    // same as app.get("/sse")
-    if (pathname === "/sse" && req.method === "GET") {
-        const clientId = query.id as string;
-
-        if (!clientId) {
-            res.writeHead(400, { "Content-Type": "text/plain" });
-            res.end("Missing client ID");
+            res.writeHead(200, {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Cache-Control",
+            });
+            res.end();
             return;
         }
 
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Cache-Control",
-        });
+        const { pathname, query } = parse(req.url || "", true);
+        if (pathname === "/health" && req.method === "GET") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            res.end("ok");
+            return;
+        }
 
-        res.write(`data: ${JSON.stringify({ type: "connected", clientId })}\n\n`);
+        if (pathname === "/sse" && req.method === "GET") {
+            const clientId = query.id as string;
 
-        const client: SSEClient = { id: clientId, res };
-        clients.set(clientId, client);
+            if (!clientId) {
+                res.writeHead(400, { "Content-Type": "text/plain" });
+                res.end("Missing client ID");
+                return;
+            }
 
-        req.on("close", () => {
-            clients.delete(clientId);
-        });
+            res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control",
+            });
 
-        req.on("error", () => {
-            clients.delete(clientId);
-        });
-    } else {
-        res.writeHead(404, { "Content-Type": "text/plain" });
-        res.end("Not Found");
+            res.write(
+                `data: ${JSON.stringify({ type: "connected", clientId })}\n\n`,
+            );
+
+            const client: SSEClient = { id: clientId, res };
+            clients.set(clientId, client);
+
+            req.on("close", () => {
+                clients.delete(clientId);
+            });
+
+            req.on("error", () => {
+                clients.delete(clientId);
+            });
+        } else {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not Found");
         }
     });
 
@@ -75,7 +97,18 @@ export function startSSEServer(): string {
     return `http://localhost:${SSE_PORT}/sse`;
 }
 
-export function sendSSEMessage(clientId: string, data: any): boolean {
+async function publishAgentEvent(projectId: string, data: unknown) {
+    try {
+        const redis = await RedisManager.getWriter();
+        await redis.publish(agentSseChannel(projectId), JSON.stringify(data));
+    } catch (err) {
+        console.error(`[sse] Failed to publish agent event for ${projectId}:`, err);
+    }
+}
+
+export function sendSSEMessage(clientId: string, data: unknown): boolean {
+    void publishAgentEvent(clientId, data);
+
     const client = clients.get(clientId);
     if (!client) {
         return false;
@@ -84,7 +117,7 @@ export function sendSSEMessage(clientId: string, data: any): boolean {
     try {
         client.res.write(`data: ${JSON.stringify(data)}\n\n`);
         return true;
-    } catch (error) {
+    } catch {
         clients.delete(clientId);
         return false;
     }
@@ -99,7 +132,7 @@ export function closeSSEConnection(clientId: string): void {
 }
 
 export function getSSEUrl(projectId: string): string {
-    return `http://localhost:${SSE_PORT}/sse?id=${projectId}`;
+    return buildPublicSseUrl(projectId);
 }
 
 export function getProjectSSEUrl(projectId: string): string {

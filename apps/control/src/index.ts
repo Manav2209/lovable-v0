@@ -115,10 +115,17 @@ async function pullTemplatefromR2(projectId: string) {
     }
 }
 
+const MY_PROJECT_ID = process.env.PROJECT_ID || "";
+
 async function ListenOrchestator() {
+    // Per-project consumer group so other project pods cannot steal our messages.
+    const group = MY_PROJECT_ID
+        ? `${StreamGroups.control}-${MY_PROJECT_ID}`
+        : StreamGroups.control;
+
     await readGroupLoop({
         stream: OrchestatorToControl,
-        group: StreamGroups.control,
+        group,
         readerRole: "controlOrch",
         handler: async (_id, fields) => {
             const parsed = parseStreamFields(fields);
@@ -127,6 +134,10 @@ async function ListenOrchestator() {
             const projectId = parsed.projectId as string | undefined;
             if (!projectId) {
                 console.log("Missing projectId");
+                return;
+            }
+
+            if (MY_PROJECT_ID && projectId !== MY_PROJECT_ID) {
                 return;
             }
 
@@ -223,14 +234,22 @@ async function ListenOrchestator() {
 }
 
 async function ListenServing() {
+    const group = MY_PROJECT_ID
+        ? `${StreamGroups.control}-${MY_PROJECT_ID}`
+        : StreamGroups.control;
+
     await readGroupLoop({
         stream: ServingToControl,
-        group: StreamGroups.control,
+        group,
         readerRole: "controlServing",
         handler: async (_id, fields) => {
             const streamMsg = parseStreamFields(fields);
             const { type, projectId, success, payload } = streamMsg;
             if (!projectId) return;
+
+            if (MY_PROJECT_ID && projectId !== MY_PROJECT_ID) {
+                return;
+            }
 
             const resolver = processing.get(projectId as string);
             if (resolver && type === PROJECT_INITIALIZED) {
@@ -267,8 +286,16 @@ async function main() {
     redis = await RedisManager.getWriter();
     console.log("redis connected");
     console.log("Control Pod is Running");
+
+    // Start stream listeners first so the per-project group exists before
+    // readiness passes and the orchestrator sends PROJECT_INITIALIZED.
+    void ListenOrchestator();
+    void ListenServing();
+    await new Promise((r) => setTimeout(r, 1500));
     startSSEServer();
-    await Promise.all([ListenOrchestator(), ListenServing()]);
+
+    // Keep process alive
+    await new Promise(() => {});
 }
 
 main().catch((error) => {

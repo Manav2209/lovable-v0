@@ -38,5 +38,12 @@ export const PROJECT_STOP = "PROJECT_STOP";
 export const PROMPT = "PROMPT";
 export const PROMPT_RESPONSE = "PROMPT_RESPONSE";
 
+/** Redis pub/sub channel prefix for agent live events: `agent:sse:{projectId}` */
+export const AgentSseChannelPrefix = "agent:sse:";
+
+export function agentSseChannel(projectId: string): string {
+    return `${AgentSseChannelPrefix}${projectId}`;
+}
+
 export * from "./preview";
 

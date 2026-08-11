@@ -11,6 +11,7 @@ import { pushNode } from "../tool/r2/push";
 import { saveNode } from "../tool/simple/saveContext";
 import { runNode } from "../tool/code/buildSource";
 import { summarizeChangesNode } from "../tool/simple/summarizeChanges";
+import { stitchAppNode } from "../tool/code/stitchApp";
 import { allTools } from "./main";
 
 export interface WorkflowState {
@@ -184,6 +185,10 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         while (!state.completed && !state.error) {
             const executeResult = await executeNode(state);
             state = { ...state, ...executeResult };
+
+            // Always compose generated components into App.tsx before validate/build.
+            const stitchResult = await stitchAppNode(state);
+            state = { ...state, ...stitchResult };
 
             const validateResult = await validateNode(state);
             state = { ...state, ...validateResult };
