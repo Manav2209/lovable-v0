@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { Link, useParams } from "react-router-dom";
-import { TopBar } from "@/components/Brand";
+import { AppShell } from "@/components/AppShell";
 import {
   api,
   getToken,
@@ -220,37 +220,33 @@ export function WorkspacePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen">
-        <TopBar />
+      <AppShell>
         <p className="px-8 py-16 text-fog">Loading workspace…</p>
-      </div>
+      </AppShell>
     );
   }
 
   if (!project) {
     return (
-      <div className="min-h-screen">
-        <TopBar />
+      <AppShell>
         <div className="px-8 py-16">
           <p className="text-ember">{error || "Project not found"}</p>
-          <Link to="/" className="mt-4 inline-block text-spark">
-            ← Back home
+          <Link to="/studio" className="mt-4 inline-block text-spark">
+            ← Back to studio
           </Link>
         </div>
-      </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <TopBar />
-
-      <div className="flex flex-1 flex-col lg:flex-row lg:overflow-hidden lg:h-[calc(100vh-65px)]">
+    <AppShell>
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row lg:overflow-hidden">
         {/* Chat column */}
         <section className="flex w-full flex-col border-b border-line/70 lg:w-[42%] lg:border-b-0 lg:border-r">
           <div className="border-b border-line/70 px-5 py-4">
-            <Link to="/" className="text-sm text-fog hover:text-spark">
-              ← Projects
+            <Link to="/studio" className="text-sm text-fog hover:text-spark">
+              ← Studio
             </Link>
             <h1 className="mt-2 font-display text-xl font-bold text-paper">
               {project.title}
@@ -396,6 +392,6 @@ export function WorkspacePage() {
           </div>
         </section>
       </div>
-    </div>
+    </AppShell>
   );
 }

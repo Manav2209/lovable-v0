@@ -78,6 +78,25 @@
   animation: rise-in 0.65s ease-out 0.12s both;
 }
 
+.animate-rise-late {
+  animation: rise-in 0.7s ease-out 0.22s both;
+}
+
 .animate-pulse-line {
   animation: pulse-line 2.4s ease-in-out infinite;
 }
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-drift {
+  animation: drift 7s ease-in-out infinite;
+}
+

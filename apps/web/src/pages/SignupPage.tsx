@@ -13,7 +13,7 @@ export function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  if (isAuthenticated) return <Navigate to="/studio" replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -21,7 +21,7 @@ export function SignupPage() {
     setLoading(true);
     try {
       await signup(username, email, password);
-      navigate("/", { replace: true });
+      navigate("/studio", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
     } finally {

@@ -22,7 +22,14 @@ export function TopBar() {
     <header className="flex items-center justify-between border-b border-line/70 px-5 py-4 md:px-8">
       <BrandMark />
       <div className="flex items-center gap-4 text-sm text-fog">
-        {user ? <span className="hidden sm:inline">{user.username}</span> : null}
+        {user ? (
+          <>
+            <Link to="/studio" className="hidden transition hover:text-spark sm:inline">
+              Studio
+            </Link>
+            <span className="hidden sm:inline">{user.username}</span>
+          </>
+        ) : null}
         <button
           type="button"
           onClick={logout}
