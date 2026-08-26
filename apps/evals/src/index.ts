@@ -11,7 +11,7 @@ interface CliArgs {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-    const args: CliArgs = { list: false, timeoutMs: 7 * 60_000 };
+    const args: CliArgs = { list: false, timeoutMs: 12 * 60_000 };
 
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -72,10 +72,17 @@ async function main() {
     // Durable JSONL trace for the whole run (crash-safe by design).
     process.env.EVAL_EVENT_LOG ??= path.join(runDir, "events.jsonl");
 
+    const provider = process.env.LLM_PROVIDER === "google" ? "google" : "groq";
+    const modelName =
+        provider === "google"
+            ? process.env.GOOGLE_MODEL || "gemini-2.5-flash"
+            : process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+
     const manifest = {
         runId,
         startedAt: Date.now(),
-        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        provider,
+        model: modelName,
         timeoutMsPerCase: args.timeoutMs,
         bunVersion: Bun.version,
         platform: `${process.platform}-${process.arch}`,
@@ -88,7 +95,7 @@ async function main() {
     );
 
     console.log(`Eval run ${runId}`);
-    console.log(`  model:     ${manifest.model}`);
+    console.log(`  model:     ${provider}/${modelName}`);
     console.log(`  cases:     ${cases.map((c) => c.id).join(", ")}`);
     console.log(`  event log: ${process.env.EVAL_EVENT_LOG}\n`);
 

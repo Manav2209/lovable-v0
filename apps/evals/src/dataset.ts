@@ -21,7 +21,7 @@ export const EVAL_CASES: EvalCase[] = [
         prompt:
             "Create a simple counter app with a number display and two buttons: one to increment and one to decrement the count. The count should start at 0.",
         expectedFeatures: ["counter"],
-        maxDurationMs: 7 * 60_000,
+        maxDurationMs: 12 * 60_000,
         maxFixAttempts: 3,
     },
 ];

@@ -17,6 +17,9 @@ const EXCLUDED = new Set(["node_modules", "dist", ".git", ".turbo"]);
  * `SHARED_DIR/PROJECT_ID`, so a seeded run gets
  * `<tempBase>/shared/<projectId>` populated from apps/template — the same
  * files the pod would pull from R2.
+ *
+ * Node_modules are junctioned (instant, zero disk) from the template so
+ * bun install is essentially a no-op verification rather than a cold fetch.
  */
 export async function seedWorkspace(runDir: string, caseId: string): Promise<SeededWorkspace> {
     const base = await fs.promises.mkdtemp(path.join(runDir, "ws-"));
@@ -26,6 +29,16 @@ export async function seedWorkspace(runDir: string, caseId: string): Promise<See
 
     await fs.promises.mkdir(projectDir, { recursive: true });
     await copyDir(TEMPLATE_DIR, projectDir);
+
+    // Symlink template's pre-installed node_modules into the workspace.
+    const templateNM = path.join(TEMPLATE_DIR, "node_modules");
+    const targetNM = path.join(projectDir, "node_modules");
+    try {
+        await fs.promises.symlink(templateNM, targetNM, "junction");
+    } catch {
+        // Fallback: if symlink fails (e.g. permissions), bun install will run.
+        // Slow but still works.
+    }
 
     return { sharedDir, projectDir, projectId };
 }
