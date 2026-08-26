@@ -9,10 +9,11 @@ interface CliArgs {
     tier?: EvalTier;
     list: boolean;
     timeoutMs: number;
+    sleepMs: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-    const args: CliArgs = { list: false, timeoutMs: 12 * 60_000 };
+    const args: CliArgs = { list: false, timeoutMs: 12 * 60_000, sleepMs: 0 };
 
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -28,6 +29,9 @@ function parseArgs(argv: string[]): CliArgs {
                 break;
             case "--timeout-ms":
                 args.timeoutMs = Number(argv[++i]);
+                break;
+            case "--sleep-ms":
+                args.sleepMs = Number(argv[++i]);
                 break;
             default:
                 console.error(`Unknown argument: ${arg}`);
@@ -119,6 +123,10 @@ async function main() {
             `${icon} ${result.status} in ${(result.durationMs / 1000).toFixed(1)}s${checkStr}` +
                 (result.error ? ` — ${result.error.slice(0, 100)}` : ""),
         );
+
+        if (args.sleepMs > 0 && evaluated.length < cases.length) {
+            await new Promise((r) => setTimeout(r, args.sleepMs));
+        }
     }
 
     const report: EvalReport = {
