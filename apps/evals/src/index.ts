@@ -66,7 +66,7 @@ async function main() {
     }
 
     const runId = `run_${Date.now().toString(36)}`;
-    const runDir = path.resolve(import.meta.dir, "..", "..", "runs", runId);
+    const runDir = path.resolve(import.meta.dir, "..", "runs", runId);
     await fs.promises.mkdir(path.join(runDir, "results"), { recursive: true });
 
     // Durable JSONL trace for the whole run (crash-safe by design).
