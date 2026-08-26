@@ -2,6 +2,7 @@ import http from "http";
 import { parse } from "url";
 import { agentSseChannel } from "types";
 import { RedisManager } from "shared-redis";
+import { isEvalMode, recordAgentEvent } from "../events/sink";
 
 const SSE_PORT = Number(process.env.SSE_PORT || 3001);
 const SSE_HOST = "0.0.0.0";
@@ -98,6 +99,7 @@ export function startSSEServer(): string {
 }
 
 async function publishAgentEvent(projectId: string, data: unknown) {
+    if (isEvalMode()) return;
     try {
         const redis = await RedisManager.getWriter();
         await redis.publish(agentSseChannel(projectId), JSON.stringify(data));
@@ -107,6 +109,13 @@ async function publishAgentEvent(projectId: string, data: unknown) {
 }
 
 export function sendSSEMessage(clientId: string, data: unknown): boolean {
+    recordAgentEvent({
+        clientId,
+        event: "agent.sse.message",
+        status: "success",
+        metadata: { type: (data as { type?: string })?.type },
+    });
+
     void publishAgentEvent(clientId, data);
 
     const client = clients.get(clientId);

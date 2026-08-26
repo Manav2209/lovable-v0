@@ -4,7 +4,7 @@ import path from "path";
 import * as z from "zod";
 import { spawn } from "node:child_process";
 import { sendSSEMessage } from "../../../sse";
-import { redis } from "../../../index";
+import { publishStreamEvent } from "../../../events/sink";
 import { ControlToOrchestrator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, PROJECT_RUN } from "types";
 import type { WorkflowState } from "../../graphs/workflow";
 
@@ -17,7 +17,7 @@ export const buildProjectAndNotifyToRun = async (
   if (!fs.existsSync(dir)) {
     console.error(`Project directory not found: ${dir}`);
   
-    await redis.xAdd(ControlToOrchestrator , "*", {
+    await publishStreamEvent(ControlToOrchestrator, {
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
@@ -31,7 +31,7 @@ export const buildProjectAndNotifyToRun = async (
   if (!fs.existsSync(packageJsonPath)) {
     console.error(`package.json not found: ${packageJsonPath}`);
 
-    await redis.xAdd(ControlToOrchestrator , "*" ,  {
+    await publishStreamEvent(ControlToOrchestrator, {
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
@@ -58,7 +58,7 @@ export const buildProjectAndNotifyToRun = async (
       console.error(`Failed to install dependencies: ${installStderr}`);
       
 
-      await redis.xAdd(ControlToOrchestrator , "*" ,  {
+      await publishStreamEvent(ControlToOrchestrator, {
         data: JSON.stringify({
           key: PROJECT_FAILED,
           projectId,
@@ -82,7 +82,7 @@ export const buildProjectAndNotifyToRun = async (
     if (buildCode !== 0) {
       console.error(`Failed to build project: ${buildStderr}`);
 
-      await redis.xAdd(ControlToOrchestrator , "*" ,  {
+      await publishStreamEvent(ControlToOrchestrator, {
         data: JSON.stringify({
           key: PROJECT_BUILD_FAILED,
           projectId,
@@ -100,7 +100,7 @@ export const buildProjectAndNotifyToRun = async (
   } catch (error) {
     console.error(`Build error: ${error instanceof Error ? error.message : String(error)}`);
   
-    await redis.xAdd(ControlToOrchestrator , "*" , {
+    await publishStreamEvent(ControlToOrchestrator, {
       data: JSON.stringify({
         key: PROJECT_BUILD_FAILED,
         projectId,
@@ -144,7 +144,7 @@ export async function runNode(state: WorkflowState): Promise<Partial<WorkflowSta
 
   await buildSource.invoke({ projectId: state.projectId });
 
-  await redis.xAdd(ControlToServing , "*" , {
+  await publishStreamEvent(ControlToServing, {
     data: JSON.stringify({
       type: PROJECT_RUN,
       projectId: state.projectId,

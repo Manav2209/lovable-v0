@@ -25,7 +25,6 @@ import {
     readGroupLoop,
     StreamGroups,
 } from "shared-redis";
-import type { RedisClientType } from "redis";
 
 const bucketName = process.env.BUCKET_NAME || "lovable";
 
@@ -37,9 +36,6 @@ console.log("Control POD started with env:", {
     SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
     GROQ_API_KEY: process.env.GROQ_API_KEY ? "***" : undefined,
 });
-
-/** Shared writer — agent tools import this and call xAdd. */
-export let redis: RedisClientType;
 
 const processing = new Map<
     string,
@@ -283,7 +279,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main() {
-    redis = await RedisManager.getWriter();
+    await RedisManager.getWriter();
     console.log("redis connected");
     console.log("Control Pod is Running");
 

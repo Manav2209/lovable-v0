@@ -3,7 +3,7 @@
 import { sendSSEMessage, getProjectSSEUrl } from "../../sse";
 import { executeMainFlow } from "../graphs/main";
 import { getProjectMemories, saveConversationMemory } from "../../memory";
-import { redis } from "../..";
+import { publishStreamEvent } from "../../events/sink";
 import { ControlToOrchestrator, OrchestatorToBackend, PROMPT_RESPONSE } from "types";
 
 export async function processPrompt(
@@ -24,13 +24,13 @@ export async function processPrompt(
       message: "Processing prompt...",
     });
 
-    await redis.xAdd(ControlToOrchestrator, "*", {
+    await publishStreamEvent(ControlToOrchestrator, {
       data: JSON.stringify({
           projectId: projectId,
           type: PROMPT_RESPONSE,
           payload: getProjectSSEUrl(clientIdUsed)
       })
-  });
+    }, { projectId });
     console.log(`Sent SSE URL to orchestrator for project ${projectId}: ${getProjectSSEUrl(clientIdUsed)}`);
 
     let finalState;

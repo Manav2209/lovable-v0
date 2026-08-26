@@ -4,9 +4,9 @@ import fs from "fs";
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
-import type { WorkflowState } from "@/agent/graphs/workflow";
+import type { WorkflowState } from "../../graphs/workflow";
 import { sendSSEMessage } from "../../../sse";
-import { redis } from  "../../../index"
+import { publishStreamEvent } from "../../../events/sink";
 import { ControlToServing } from "types";
 
 const pushCodeInput = z.object({
@@ -85,10 +85,10 @@ export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) =
         };
 
 
-        await redis.xAdd(ControlToServing,"*", {
+        await publishStreamEvent(ControlToServing, {
             key: projectId,
             value: JSON.stringify(newObject)
-        })
+        }, { projectId })
 
         return {
             success: true,
