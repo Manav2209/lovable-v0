@@ -19,6 +19,8 @@ export interface AgentEvent {
 
 export interface EventSink {
     record(event: AgentEvent): Promise<void> | void;
+    /** Resolves when all previously issued writes are durably stored. */
+    flush(): Promise<void>;
 }
 
 export function isEvalMode(): boolean {
@@ -39,6 +41,8 @@ export class MemorySink implements EventSink {
         }
     }
 
+    async flush(): Promise<void> {}
+
     getEvents(): readonly AgentEvent[] {
         return this.events;
     }
@@ -50,6 +54,7 @@ export class MemorySink implements EventSink {
 
 export class FileSink implements EventSink {
     private readonly dirReady: Promise<void>;
+    private readonly pending = new Set<Promise<void>>();
 
     constructor(private readonly filePath: string) {
         this.dirReady = fs.promises
@@ -57,10 +62,22 @@ export class FileSink implements EventSink {
             .then(() => undefined);
     }
 
-    async record(event: AgentEvent): Promise<void> {
-        await this.dirReady;
-        const line = JSON.stringify(event) + "\n";
-        await fs.promises.appendFile(this.filePath, line, "utf8");
+    record(event: AgentEvent): Promise<void> {
+        const write = this.dirReady
+            .then(() =>
+                fs.promises.appendFile(
+                    this.filePath,
+                    JSON.stringify(event) + "\n",
+                    "utf8",
+                ),
+            )
+            .finally(() => this.pending.delete(write));
+        this.pending.add(write);
+        return write;
+    }
+
+    async flush(): Promise<void> {
+        await Promise.allSettled([...this.pending]);
     }
 }
 
@@ -78,10 +95,15 @@ export class MultiSink implements EventSink {
             }),
         );
     }
+
+    async flush(): Promise<void> {
+        await Promise.all(this.sinks.map((s) => s.flush()));
+    }
 }
 
 class NoopSink implements EventSink {
     record(): void {}
+    async flush(): Promise<void> {}
 }
 
 let sinkInstance: EventSink | null = null;
@@ -109,6 +131,14 @@ export function getEventSink(): EventSink {
 export function resetEventSink(): void {
     sinkInstance = null;
     memorySinkInstance = null;
+}
+
+/**
+ * Resolves once every event issued so far is durably stored.
+ * Eval runners must call this before reading the JSONL log or exiting.
+ */
+export async function flushEventSink(): Promise<void> {
+    await getEventSink().flush();
 }
 
 export function getMemoryEvents(): readonly AgentEvent[] {
@@ -209,7 +239,6 @@ export async function publishStreamEvent(
         recordAgentEvent({
             projectId: context.projectId || described.projectId,
             event: "agent.stream.publish",
-            timestamp: Date.now(),
             durationMs: Date.now() - startedAt,
             status: "error",
             metadata: {
