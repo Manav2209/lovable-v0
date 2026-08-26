@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
 import type { WorkflowState } from "@control/agent/graphs/workflow";
+import type { EvalCase } from "../dataset";
 import { seedWorkspace } from "./workspace";
+import { extractMetrics, runChecks, type CheckResult, type EvalMetrics } from "../checks";
 
 export type CaseStatus =
     | "passed_build"
@@ -25,6 +27,12 @@ export interface CaseResult {
     timestamp: number;
 }
 
+export interface RunCaseResult {
+    result: CaseResult;
+    metrics: EvalMetrics;
+    checks?: CheckResult;
+}
+
 export interface RunCaseOptions {
     runId: string;
     runDir: string;
@@ -39,19 +47,19 @@ type CaseResultCore = Omit<
 const TIMEOUT_MARKER = Symbol("eval-timeout");
 
 export async function runCase(
-    evalCase: import("../dataset").EvalCase,
+    evalCase: EvalCase,
     options: RunCaseOptions,
-): Promise<CaseResult> {
+): Promise<RunCaseResult> {
     const startedAt = Date.now();
 
     let result: CaseResult;
+    let metrics: EvalMetrics;
+    let checks: CheckResult | undefined;
 
     try {
         const workspace = await seedWorkspace(options.runDir, evalCase.id);
         process.env.SHARED_DIR = workspace.sharedDir;
 
-        // Lazy imports so EVAL_MODE/SHARED_DIR env are in place first and the
-        // heavy LangChain graph only loads when a case actually runs.
         const { getMemoryEvents, flushEventSink } = await import(
             "@control/events/sink"
         );
@@ -88,6 +96,7 @@ export async function runCase(
                 error: `Exceeded ${options.timeoutMs}ms budget`,
                 eventsCaptured: getMemoryEvents().length,
             };
+            metrics = extractMetrics({ completed: false, fixAttempts: 0 } as WorkflowState, Date.now() - startedAt);
         } else {
             const final = raced.final as WorkflowState;
             const buildOk = final.completed === true && !final.error;
@@ -104,6 +113,11 @@ export async function runCase(
                 error: final.error,
                 eventsCaptured: getMemoryEvents().length,
             };
+            metrics = extractMetrics(final, Date.now() - startedAt);
+
+            if (buildOk) {
+                checks = await runChecks(workspace.projectDir, evalCase.expectedFeatures);
+            }
         }
 
         await flushEventSink();
@@ -115,20 +129,21 @@ export async function runCase(
             error: err instanceof Error ? err.message : String(err),
             eventsCaptured: 0,
         };
+        metrics = extractMetrics({ completed: false, fixAttempts: 0 } as WorkflowState, Date.now() - startedAt);
         try {
             const { flushEventSink } = await import("@control/events/sink");
             await flushEventSink();
         } catch {
-            /* sink unavailable — nothing more we can do */
+            /* sink unavailable */
         }
     }
 
     await writeResultAtomically(options.runDir, result);
-    return result;
+    return { result, metrics, checks };
 }
 
 function core(
-    evalCase: import("../dataset").EvalCase,
+    evalCase: EvalCase,
     options: RunCaseOptions,
     projectId: string,
     startedAt: number,
