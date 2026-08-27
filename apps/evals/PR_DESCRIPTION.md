@@ -49,6 +49,39 @@ Three tiers, each with `expectedFeatures[]`, `maxDurationMs`, `maxFixAttempts`:
 - `printSummary()` — console table with per-case status, duration, feature check scores
 - `writeReport()` — writes `runs/<runId>/report.md` with full markdown tables + metadata
 
+### Milestone 6 — Structural (AST) checks
+
+`apps/evals/src/ast.ts` + `checks.ts` extension: `ast:`-prefixed assertions using `@babel/parser` + `@babel/traverse`.
+
+- `ast:import:<mod>` / `ast:import:<mod>:<name>` — real module/import presence (not grep)
+- `ast:jsx:<Element>` / `ast:jsx:<Element>:attr:<Attr>` — actual JSX elements/attributes in rendered output
+- `ast:hook:useState` — genuine hook call expressions
+- `ast:component:<Name>` / `ast:exports:<Name>` — component definitions and named exports
+
+Applied to high-value cases (`analytics-charts` → recharts imports + real `<BarChart>`/`<LineChart>`; `multi-page-nav`/`blog-crud` → react-router import + `<Route>` + `useState`). Eliminates grep false positives (e.g. a string literal matching "recharts" without importing or rendering it).
+
+### Milestone 7 — Before/after diff
+
+`apps/evals/src/diff.ts`: `loadRun()`, `compareRuns()` (improved/regressed/stable_pass/stable_fail/new/removed + status ranking), `printDiff()`, `writeDiff()` — via `--before <dir> --after <dir>`.
+
+### Milestone 8 — Weighted scoring
+
+`apps/evals/src/score.ts`: `computeScore()` composites build 40% / features 30% / fix-efficiency 15% / duration 15%, normalized 0–100, tier bonus (medium ×1.1, hard ×1.25); `writeScoreBoard()` → `score.md`.
+
+### Observability — Langfuse integration
+
+First-class LLM/tool observability via the OpenTelemetry-based Langfuse SDK.
+
+- `apps/control/src/observability/instrumentation.ts` — OTel `NodeSDK` + `LangfuseSpanProcessor` bootstrap (no-op when `LANGFUSE_ENABLED=0` or keys missing)
+- `apps/control/src/observability/langfuse.ts` — shared `CallbackHandler`, `injectLangfuse()` (attaches to each model in `client.ts`), `traceCase()` per-case trace grouping
+- Every eval case emits a trace named `run<runId>:<caseId>` with the run as `sessionId`, grouping all LLM generations (`model.invoke()` at all 6 chokepoints) + 25 tool spans under one queryable trace
+- Verified live against Langfuse cloud: trace `runrun_mtbqt3dd:counter-basic` ingested with 4 GENERATION observations (token counts captured); costs shown once the project has pricing configured
+
+```bash
+# opt out of cloud ingestion (hermetic evals)
+LANGFUSE_ENABLED=0 bun run src/index.ts --filter counter-basic
+```
+
 ---
 
 ## Verified results
@@ -97,8 +130,8 @@ bun run ./src/index.ts --timeout-ms 300000
 
 ## Next steps
 
-1. **Rate-limit mitigation**: rotate API keys or upgrade to paid Gemini tier for full 12-case runs
-2. **AST-based checks**: beyond regex/grep — parse imports, component structure, hook usage
-3. **Eval difference report**: per-case before/after diff for model upgrades
-4. **Event trace viewer**: consume `runs/<runId>/events.jsonl` in control UI (M6)
-5. **Scoring rubric**: weighted composite score across build, features, complexity, UI quality
+1. **Rate-limit mitigation**: rotate API keys or upgrade to paid Gemini tier for full 12-case runs (Gemini free tier caps at 20 RPD)
+2. **Add Langfuse scoring/eval**: attach LLM-as-judge evaluation runs to captured traces in Langfuse
+3. **AST composition checks**: detect that one component renders another (reference graph), stricter "real hook" top-level-call validation
+4. **Event trace viewer**: consume `runs/<runId>/events.jsonl` in control UI
+5. **Baseline regression gate**: wire `score.md` thresholds into CI so a model upgrade cannot silently regress quality
