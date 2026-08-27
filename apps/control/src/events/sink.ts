@@ -11,6 +11,8 @@ export interface AgentEvent {
     clientId?: string;
     service: string;
     event: string;
+    /** Monotonic ordering id assigned by the sink so traces can be reconstructed deterministically. */
+    seq?: number;
     timestamp: number;
     durationMs?: number;
     status?: AgentEventStatus;
@@ -55,6 +57,8 @@ export class MemorySink implements EventSink {
 export class FileSink implements EventSink {
     private readonly dirReady: Promise<void>;
     private readonly pending = new Set<Promise<void>>();
+    // Serializes appends so JSONL line order matches the order record() was called.
+    private writeChain: Promise<void> = Promise.resolve();
 
     constructor(private readonly filePath: string) {
         this.dirReady = fs.promises
@@ -63,16 +67,21 @@ export class FileSink implements EventSink {
     }
 
     record(event: AgentEvent): Promise<void> {
-        const write = this.dirReady
+        const write = this.writeChain
+            .catch(() => undefined)
             .then(() =>
-                fs.promises.appendFile(
-                    this.filePath,
-                    JSON.stringify(event) + "\n",
-                    "utf8",
+                this.dirReady.then(() =>
+                    fs.promises.appendFile(
+                        this.filePath,
+                        JSON.stringify(event) + "\n",
+                        "utf8",
+                    ),
                 ),
             )
             .finally(() => this.pending.delete(write));
         this.pending.add(write);
+        // Chain the next write after this one completes to preserve ordering.
+        this.writeChain = write;
         return write;
     }
 
@@ -82,13 +91,21 @@ export class FileSink implements EventSink {
 }
 
 export class MultiSink implements EventSink {
+    // Central monotonic ordering counter shared across all children sinks so
+    // both memory and file copies observe the same event ordering.
+    private static seqCounter = 0;
+
     constructor(private readonly sinks: EventSink[]) {}
 
     async record(event: AgentEvent): Promise<void> {
+        const sequenced = {
+            ...event,
+            seq: MultiSink.seqCounter++,
+        };
         await Promise.all(
             this.sinks.map(async (sink) => {
                 try {
-                    await sink.record(event);
+                    await sink.record(sequenced);
                 } catch (err) {
                     console.error("[events] sink failed:", err);
                 }

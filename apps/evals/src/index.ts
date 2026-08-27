@@ -3,6 +3,7 @@ import path from "path";
 import { bootstrapEnv } from "./env";
 import { selectCases, type EvalTier } from "./dataset";
 import { printSummary, writeReport, type EvalReport, type EvaluatedCase } from "./report";
+import { cleanupRunDir, cleanupRunWorkspaces } from "./offline/workspace";
 
 interface CliArgs {
     filter?: string;
@@ -10,10 +11,11 @@ interface CliArgs {
     list: boolean;
     timeoutMs: number;
     sleepMs: number;
+    clean: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-    const args: CliArgs = { list: false, timeoutMs: 12 * 60_000, sleepMs: 0 };
+    const args: CliArgs = { list: false, timeoutMs: 12 * 60_000, sleepMs: 0, clean: false };
 
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -32,6 +34,9 @@ function parseArgs(argv: string[]): CliArgs {
                 break;
             case "--sleep-ms":
                 args.sleepMs = Number(argv[++i]);
+                break;
+            case "--clean":
+                args.clean = true;
                 break;
             default:
                 console.error(`Unknown argument: ${arg}`);
@@ -70,8 +75,20 @@ async function main() {
         process.exit(1);
     }
 
+    const runsRoot = path.resolve(import.meta.dir, "..", "runs");
+
+    if (args.clean) {
+        const stale = await fs.promises.readdir(runsRoot).catch(() => []);
+        await Promise.all(
+            stale
+                .filter((d) => d.startsWith("run_"))
+                .map((d) => cleanupRunDir(path.join(runsRoot, d))),
+        );
+        console.log(`Cleaned ${stale.filter((d) => d.startsWith("run_")).length} stale run(s)`);
+    }
+
     const runId = `run_${Date.now().toString(36)}`;
-    const runDir = path.resolve(import.meta.dir, "..", "runs", runId);
+    const runDir = path.join(runsRoot, runId);
     await fs.promises.mkdir(path.join(runDir, "results"), { recursive: true });
 
     process.env.EVAL_EVENT_LOG ??= path.join(runDir, "events.jsonl");
@@ -106,41 +123,71 @@ async function main() {
     const { runCase } = await import("./offline/runner");
 
     const evaluated: EvaluatedCase[] = [];
-    for (const c of cases) {
-        process.stdout.write(`▶ ${c.id} ... `);
-        const { result, metrics, checks } = await runCase(c, {
+    const aborted = false;
+
+    async function emitReport() {
+        if (evaluated.length === 0) return;
+        const report: EvalReport = {
             runId,
-            runDir,
-            timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
-        });
-        evaluated.push({ result, metrics, checks });
-
-        const icon = result.status === "passed_build" ? "✔" : "✘";
-        const checkStr = checks
-            ? ` [${checks.score}/${checks.total}]`
-            : "";
-        console.log(
-            `${icon} ${result.status} in ${(result.durationMs / 1000).toFixed(1)}s${checkStr}` +
-                (result.error ? ` — ${result.error.slice(0, 100)}` : ""),
-        );
-
-        if (args.sleepMs > 0 && evaluated.length < cases.length) {
-            await new Promise((r) => setTimeout(r, args.sleepMs));
-        }
+            model: modelName,
+            provider,
+            startedAt: manifest.startedAt,
+            cases: evaluated,
+        };
+        printSummary(report);
+        await writeReport(runDir, report);
     }
 
-    const report: EvalReport = {
-        runId,
-        model: modelName,
-        provider,
-        startedAt: manifest.startedAt,
-        cases: evaluated,
+    // SIGINT/SIGTERM: flush events, write a partial report, then exit cleanly.
+    const onSignal = (signal: string): void => {
+        console.log(`\nReceived ${signal}, finishing report...`);
+        emitReport()
+            .catch((err) => console.error("Failed to write partial report:", err))
+            .finally(async () => {
+                try {
+                    const { flushEventSink } = await import("@control/events/sink");
+                    await flushEventSink();
+                } catch {
+                    /* sink unavailable */
+                }
+                process.exit(130);
+            });
     };
+    process.on("SIGINT", () => onSignal("SIGINT"));
+    process.on("SIGTERM", () => onSignal("SIGTERM"));
 
-    printSummary(report);
-    await writeReport(runDir, report);
-    console.log(`Results: ${path.join(runDir, "results")}`);
-    console.log(`Report:  ${path.join(runDir, "report.md")}`);
+    try {
+        for (const c of cases) {
+            process.stdout.write(`▶ ${c.id} ... `);
+            const { result, metrics, checks } = await runCase(c, {
+                runId,
+                runDir,
+                timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
+                maxFixAttempts: c.maxFixAttempts,
+            });
+            evaluated.push({ result, metrics, checks });
+
+            const icon = result.status === "passed_build" ? "✔" : "✘";
+            const checkStr = checks
+                ? ` [${checks.score}/${checks.total}]`
+                : "";
+            console.log(
+                `${icon} ${result.status} in ${(result.durationMs / 1000).toFixed(1)}s${checkStr}` +
+                    (result.error ? ` — ${result.error.slice(0, 100)}` : ""),
+            );
+
+            if (args.sleepMs > 0 && evaluated.length < cases.length) {
+                await new Promise((r) => setTimeout(r, args.sleepMs));
+            }
+        }
+    } finally {
+        if (!aborted) {
+            await emitReport();
+            await cleanupRunWorkspaces(runDir);
+            console.log(`Results: ${path.join(runDir, "results")}`);
+            console.log(`Report:  ${path.join(runDir, "report.md")}`);
+        }
+    }
 
     const passed = evaluated.filter((c) => c.result.status === "passed_build").length;
     if (passed < evaluated.length) process.exitCode = 1;

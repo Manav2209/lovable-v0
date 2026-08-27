@@ -21,6 +21,7 @@ export interface CaseResult {
     completed: boolean;
     buildStatus?: WorkflowState["buildStatus"];
     fixAttempts?: number;
+    maxFixAttempts?: number;
     error?: string;
     durationMs: number;
     eventsCaptured: number;
@@ -37,6 +38,7 @@ export interface RunCaseOptions {
     runId: string;
     runDir: string;
     timeoutMs: number;
+    maxFixAttempts?: number;
 }
 
 type CaseResultCore = Omit<
@@ -70,6 +72,7 @@ export async function runCase(
             prompt: evalCase.prompt,
             clientId: workspace.projectId,
             fixAttempts: 0,
+            maxFixAttempts: options.maxFixAttempts,
             completed: false,
             messages: [],
             threadId: workspace.projectId,
@@ -156,6 +159,7 @@ function core(
         durationMs: Date.now() - startedAt,
         eventsCaptured: 0,
         timestamp: startedAt,
+        maxFixAttempts: options.maxFixAttempts,
     };
 }
 
