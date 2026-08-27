@@ -4,6 +4,7 @@ import type { WorkflowState } from "@control/agent/graphs/workflow";
 import type { EvalCase } from "../dataset";
 import { seedWorkspace } from "./workspace";
 import { extractMetrics, runChecks, type CheckResult, type EvalMetrics } from "../checks";
+import { traceCase } from "@control/observability/langfuse";
 
 export type CaseStatus =
     | "passed_build"
@@ -78,11 +79,17 @@ export async function runCase(
             threadId: workspace.projectId,
         };
 
-        const workflowPromise = executeMainFlow(state).catch(
-            (err: unknown): never => {
-                throw err instanceof Error ? err : new Error(String(err));
+        const workflowPromise = traceCase(
+            {
+                runId: options.runId,
+                caseId: evalCase.id,
+                tier: evalCase.tier,
+                prompt: evalCase.prompt,
             },
-        );
+            async () => executeMainFlow(state),
+        ).catch((err: unknown): never => {
+            throw err instanceof Error ? err : new Error(String(err));
+        });
 
         const raced = await Promise.race([
             workflowPromise.then((final) => ({ kind: "done" as const, final })),

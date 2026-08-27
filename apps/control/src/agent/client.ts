@@ -2,6 +2,8 @@ import { ChatGroq } from "@langchain/groq";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { MemorySaver } from "@langchain/langgraph";
+import "../observability/instrumentation";
+import { injectLangfuse } from "../observability/langfuse";
 
 export type LLMProvider = "groq" | "google";
 
@@ -21,17 +23,21 @@ class LLMClient {
         this._provider = resolveProvider();
 
         if (this._provider === "google") {
-            this._model = new ChatGoogleGenerativeAI({
-                apiKey: process.env.GOOGLE_API_KEY || "",
-                model: process.env.GOOGLE_MODEL || "gemini-2.5-flash",
-                temperature: 0.5,
-            });
+            this._model = injectLangfuse(
+                new ChatGoogleGenerativeAI({
+                    apiKey: process.env.GOOGLE_API_KEY || "",
+                    model: process.env.GOOGLE_MODEL || "gemini-2.5-flash",
+                    temperature: 0.5,
+                }),
+            );
         } else {
-            this._model = new ChatGroq({
-                apiKey: process.env.GROQ_API_KEY || "",
-                model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-                temperature: 0.5,
-            });
+            this._model = injectLangfuse(
+                new ChatGroq({
+                    apiKey: process.env.GROQ_API_KEY || "",
+                    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+                    temperature: 0.5,
+                }),
+            );
         }
 
         this._checkpointer = new MemorySaver();

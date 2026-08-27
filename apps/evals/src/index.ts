@@ -177,6 +177,14 @@ async function main() {
             .catch((err) => console.error("Failed to write partial report:", err))
             .finally(async () => {
                 try {
+                    const { forceLangfuseFlush } = await import(
+                        "@control/observability/instrumentation"
+                    );
+                    await forceLangfuseFlush();
+                } catch {
+                    /* sink unavailable */
+                }
+                try {
                     const { flushEventSink } = await import("@control/events/sink");
                     await flushEventSink();
                 } catch {
@@ -219,6 +227,14 @@ async function main() {
             console.log(`Results: ${path.join(runDir, "results")}`);
             console.log(`Report:  ${path.join(runDir, "report.md")}`);
             console.log(`Score:   ${path.join(runDir, "score.md")}`);
+            try {
+                const { forceLangfuseFlush } = await import(
+                    "@control/observability/instrumentation"
+                );
+                await forceLangfuseFlush();
+            } catch {
+                /* sink unavailable */
+            }
         }
     }
 
