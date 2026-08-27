@@ -4,6 +4,8 @@ import { bootstrapEnv } from "./env";
 import { selectCases, type EvalTier } from "./dataset";
 import { printSummary, writeReport, type EvalReport, type EvaluatedCase } from "./report";
 import { cleanupRunDir, cleanupRunWorkspaces } from "./offline/workspace";
+import { compareRuns, loadRun, printDiff, writeDiff } from "./diff";
+import { computeScoredCases, renderScoreTable, writeScoreBoard } from "./score";
 
 interface CliArgs {
     filter?: string;
@@ -12,6 +14,8 @@ interface CliArgs {
     timeoutMs: number;
     sleepMs: number;
     clean: boolean;
+    before?: string;
+    after?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -38,6 +42,12 @@ function parseArgs(argv: string[]): CliArgs {
             case "--clean":
                 args.clean = true;
                 break;
+            case "--before":
+                args.before = argv[++i];
+                break;
+            case "--after":
+                args.after = argv[++i];
+                break;
             default:
                 console.error(`Unknown argument: ${arg}`);
                 process.exit(2);
@@ -61,6 +71,23 @@ async function main() {
         }
         console.log(`\n${cases.length} case(s)`);
         return;
+    }
+
+    // Diff mode: compare two existing runs instead of executing cases.
+    const runsRoot0 = path.resolve(import.meta.dir, "..", "runs");
+    const resolveRunDir = (v: string): string =>
+        path.isAbsolute(v) ? v : path.join(runsRoot0, v);
+    if (args.before && args.after) {
+        const before = await loadRun(resolveRunDir(args.before));
+        const after = await loadRun(resolveRunDir(args.after));
+        const diff = compareRuns(before, after);
+        printDiff(diff);
+        await writeDiff(path.join(runsRoot0, `run_${Date.now().toString(36)}`), diff);
+        return;
+    }
+    if (args.before || args.after) {
+        console.error("--before and --after must both be provided to run a diff.");
+        process.exit(2);
     }
 
     if (cases.length === 0) {
@@ -135,6 +162,11 @@ async function main() {
             cases: evaluated,
         };
         printSummary(report);
+
+        const scores = computeScoredCases(cases, evaluated);
+        for (const line of renderScoreTable(scores)) console.log(line);
+        await writeScoreBoard(runDir, runId, scores);
+
         await writeReport(runDir, report);
     }
 
@@ -186,6 +218,7 @@ async function main() {
             await cleanupRunWorkspaces(runDir);
             console.log(`Results: ${path.join(runDir, "results")}`);
             console.log(`Report:  ${path.join(runDir, "report.md")}`);
+            console.log(`Score:   ${path.join(runDir, "score.md")}`);
         }
     }
 
