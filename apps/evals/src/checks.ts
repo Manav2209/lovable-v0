@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { WorkflowState } from "@control/agent/graphs/workflow";
+import { analyzeProject, matchAstCheck, type AstIndex } from "./ast";
 
 export interface FeatureResult {
     feature: string;
@@ -50,8 +51,16 @@ export async function runChecks(
 ): Promise<CheckResult> {
     const features: FeatureResult[] = [];
 
+    const hasAstChecks = expectedFeatures.some((f) => f.startsWith("ast:"));
+    const astIndex: AstIndex = hasAstChecks
+        ? await analyzeProject(projectDir)
+        : new Map();
+
     for (const feat of expectedFeatures) {
-        if (feat.startsWith("file:")) {
+        if (feat.startsWith("ast:")) {
+            const { passed, detail } = matchAstCheck(astIndex, feat);
+            features.push({ feature: feat, passed, detail });
+        } else if (feat.startsWith("file:")) {
             const rel = feat.slice(5);
             const exists = fs.existsSync(path.join(projectDir, rel));
             features.push({ feature: feat, passed: exists, detail: exists ? "exists" : "missing" });

@@ -30,6 +30,9 @@ export interface WorkflowState {
     buildOutput?: string;
     errorAnalysis?: any;
     fixAttempts: number;
+    // Optional cap on auto-fix iterations. When set, the loop stops once
+    // fixAttempts reaches this budget (production defaults to unlimited).
+    maxFixAttempts?: number;
     completed: boolean;
     error?: string;
     messages: Array<{ role: string; content: string }>;
@@ -182,7 +185,11 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             throw new Error(`Failed to create plan: ${state.error}`);
         }
 
-        while (!state.completed && !state.error) {
+        while (
+            !state.completed &&
+            !state.error &&
+            (state.maxFixAttempts == null || state.fixAttempts < state.maxFixAttempts)
+        ) {
             const executeResult = await executeNode(state);
             state = { ...state, ...executeResult };
 
@@ -240,7 +247,18 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         }
 
         if (!state.completed && !state.error) {
-            state.error = "Workflow ended without completion or error";
+            if (
+                state.maxFixAttempts != null &&
+                state.fixAttempts >= state.maxFixAttempts
+            ) {
+                state.error = `Exceeded maxFixAttempts budget of ${state.maxFixAttempts}`;
+                sendSSEMessage(state.clientId, {
+                    type: "error",
+                    message: state.error,
+                });
+            } else {
+                state.error = "Workflow ended without completion or error";
+            }
         }
 
         if (state.toolResults && state.toolResults.length > 0) {

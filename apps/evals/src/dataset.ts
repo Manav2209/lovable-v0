@@ -5,9 +5,10 @@ export interface EvalCase {
     tier: EvalTier;
     prompt: string;
     // Post-build assertions:
-    //  - Plain string  -> grep across all src/**/*.{tsx,ts,jsx,js}
-    //  - "file:<path>" -> file must exist (relative to project root)
-    //  - "dep:<name>"  -> dependency present in package.json
+    //  - Plain string          -> grep across all src/**/*.{tsx,ts,jsx,js}
+    //  - "file:<path>"         -> file must exist (relative to project root)
+    //  - "dep:<name>"          -> dependency present in package.json
+    //  - "ast:..."             -> structural AST assertion (see src/ast.ts)
     expectedFeatures: string[];
     maxDurationMs?: number;
     maxFixAttempts?: number;
@@ -67,7 +68,14 @@ export const EVAL_CASES: EvalCase[] = [
         tier: "medium",
         prompt:
             "Create a multi-page app with react-router. Pages: Home, About, Contact. A persistent navigation bar at the top with links to all pages. The home page should have a welcome message, the about page should have team info, and the contact page should have a form with name, email, and message fields.",
-        expectedFeatures: ["react-router", "Route", "About", "Contact", "nav", "form"],
+        expectedFeatures: [
+            "ast:import:react-router",
+            "ast:jsx:Route",
+            "About",
+            "Contact",
+            "nav",
+            "form",
+        ],
         maxDurationMs: 12 * 60_000,
         maxFixAttempts: 4,
     },
@@ -96,7 +104,13 @@ export const EVAL_CASES: EvalCase[] = [
         tier: "hard",
         prompt:
             "Build an analytics dashboard with two charts: a bar chart showing monthly revenue (Jan–Jun) and a line chart showing user signups over the same period. Use recharts library. Include a summary row below with total revenue, total signups, and growth percentage.",
-        expectedFeatures: ["recharts", "BarChart", "LineChart", "revenue", "dep:recharts"],
+        expectedFeatures: [
+            "ast:import:recharts",
+            "ast:jsx:BarChart",
+            "ast:jsx:LineChart",
+            "dep:recharts",
+            "revenue",
+        ],
         maxDurationMs: 12 * 60_000,
         maxFixAttempts: 4,
     },
@@ -105,7 +119,14 @@ export const EVAL_CASES: EvalCase[] = [
         tier: "hard",
         prompt:
             "Create a simple blog platform with react-router. Pages: PostList (shows all posts as cards with title and excerpt), PostDetail (full content of a single post), CreatePost (form with title, content textarea, and submit button). State managed in-memory with useState.",
-        expectedFeatures: ["react-router", "useState", "Route", "textarea", "post", "form"],
+        expectedFeatures: [
+            "ast:import:react-router",
+            "ast:jsx:Route",
+            "ast:hook:useState",
+            "textarea",
+            "post",
+            "form",
+        ],
         maxDurationMs: 12 * 60_000,
         maxFixAttempts: 4,
     },

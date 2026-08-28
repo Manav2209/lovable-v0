@@ -6,6 +6,8 @@ export interface SeededWorkspace {
     sharedDir: string;
     projectDir: string;
     projectId: string;
+    /** The ws-* parent directory created for this case; removed during run cleanup. */
+    workspaceDir: string;
 }
 
 const TEMPLATE_DIR = path.resolve(import.meta.dir, "..", "..", "..", "template");
@@ -40,7 +42,27 @@ export async function seedWorkspace(runDir: string, caseId: string): Promise<See
         // Slow but still works.
     }
 
-    return { sharedDir, projectDir, projectId };
+    return { sharedDir, projectDir, projectId, workspaceDir: base };
+}
+
+/**
+ * Removes all ws-* workspace directories under a run, keeping the run's
+ * manifest.json, events.jsonl, results/, and report.md intact.
+ * Call in index.ts after report generation so M6 AST checks can still
+ * read the generated project files during the run itself.
+ */
+export async function cleanupRunWorkspaces(runDir: string): Promise<void> {
+    const entries = await fs.promises.readdir(runDir, { withFileTypes: true });
+    await Promise.all(
+        entries
+            .filter((e) => e.isDirectory() && e.name.startsWith("ws-"))
+            .map((e) => fs.promises.rm(path.join(runDir, e.name), { recursive: true, force: true })),
+    );
+}
+
+/** Removes an entire run directory (used by --clean for stale run dirs). */
+export async function cleanupRunDir(runDir: string): Promise<void> {
+    await fs.promises.rm(runDir, { recursive: true, force: true });
 }
 
 async function copyDir(src: string, dest: string): Promise<void> {

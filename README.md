@@ -39,6 +39,7 @@ Browser
 | [`apps/serve`](apps/serve) | In-pod Vite preview server |
 | [`apps/ingress`](apps/ingress) | Host reverse proxy for `*.preview.localhost` |
 | [`apps/template`](apps/template) | Base React/Vite/Tailwind/shadcn project (also mirrored in R2) |
+| [`apps/evals`](apps/evals) | Headless eval harness: seeds a template, drives the real agent, runs deterministic + AST checks, scores & reports |
 
 ### Packages
 
@@ -145,6 +146,8 @@ apps/web              → :5173 (proxies /api → :4000)
 | [`decision.md`](decision.md) | Why NodePort, Redis split, stitchApp, timeouts, etc. |
 | [`apps/orchestator/README.md`](apps/orchestator/README.md) | Orchestrator-focused runbook |
 | [`apps/ingress/README.md`](apps/ingress/README.md) | Preview proxy |
+| [`apps/evals/DECISIONS.md`](apps/evals/DECISIONS.md) | Eval system: decisions + methodology (why/how) |
+| [`apps/evals/PR_DESCRIPTION.md`](apps/evals/PR_DESCRIPTION.md) | Eval system change summary (M1–M8 + observability) |
 
 ## Monorepo scripts
 

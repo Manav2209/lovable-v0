@@ -85,7 +85,11 @@ export async function writeReport(
         lines.push(`| Status | ${c.result.status} |`);
         lines.push(`| Duration | ${dur} |`);
         lines.push(`| Build | ${c.result.buildStatus ?? "n/a"} |`);
-        lines.push(`| Fix attempts | ${c.result.fixAttempts ?? 0} |`);
+        lines.push(
+            `| Fix attempts | ${c.result.fixAttempts ?? 0}${
+                c.result.maxFixAttempts != null ? ` / ${c.result.maxFixAttempts}` : ""
+            } |`,
+        );
         lines.push(`| Files created | ${c.metrics.filesCreated} |`);
         lines.push(`| Files modified | ${c.metrics.filesModified} |`);
         lines.push(`| Dependencies added | ${c.metrics.dependenciesAdded} |`);
