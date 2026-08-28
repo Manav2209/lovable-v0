@@ -95,9 +95,13 @@ async function main() {
         process.exit(2);
     }
 
-    if (!process.env.GROQ_API_KEY && !process.env.GOOGLE_API_KEY) {
+    if (
+        !process.env.GROQ_API_KEY &&
+        !process.env.GOOGLE_API_KEY &&
+        !process.env.AIROUTER_API_KEY
+    ) {
         console.error(
-            "No LLM API key set. Add GROQ_API_KEY or GOOGLE_API_KEY to apps/control/.env.",
+            "No LLM API key set. Add GROQ_API_KEY, GOOGLE_API_KEY, or AIROUTER_API_KEY to your .env.",
         );
         process.exit(1);
     }
@@ -120,11 +124,17 @@ async function main() {
 
     process.env.EVAL_EVENT_LOG ??= path.join(runDir, "events.jsonl");
 
-    const provider = process.env.LLM_PROVIDER === "google" ? "google" : "groq";
+    const provider = process.env.LLM_PROVIDER === "google"
+        ? "google"
+        : process.env.LLM_PROVIDER === "airouter"
+          ? "airouter"
+          : "groq";
     const modelName =
         provider === "google"
             ? process.env.GOOGLE_MODEL || "gemini-2.5-flash"
-            : process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+            : provider === "airouter"
+              ? process.env.AIROUTER_MODEL || "openai/gpt-4o-mini"
+              : process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
     const manifest = {
         runId,
