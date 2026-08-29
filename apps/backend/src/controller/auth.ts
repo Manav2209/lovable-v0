@@ -4,8 +4,17 @@ import { LoginSchema, SignUpSchema } from "../lib/schema";
 import bcrypt from "bcrypt";
 import { eq } from "drizzle-orm";
 import jwt from "jsonwebtoken";
+import type { StringValue } from "ms";
 import type {Request , Response} from "express"
 
+
+const TOKEN_TTL = (process.env.JWT_EXPIRES_IN || "7d") as StringValue;
+
+/** Never return the password hash to clients. */
+function publicUser<T extends { password?: string }>(user: T): Omit<T, "password"> {
+    const { password: _password, ...safe } = user;
+    return safe;
+}
 
 export const signup = async  (req : Request, res: Response) => {
     const { success, data } = SignUpSchema.safeParse(req.body);
@@ -43,9 +52,17 @@ export const signup = async  (req : Request, res: Response) => {
         })
         .returning();
 
+    if (!user) {
+        return res.status(500).json({
+        success: false,
+        data: null,
+        error: "SIGNUP_FAILED",
+        });
+    }
+
     return res.status(201).json({
         success: true,
-        data: user,
+        data: publicUser(user),
         error: null,
     });
 }
@@ -87,13 +104,15 @@ export const login = async (req: Request, res: Response) => {
         });
     }
 
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET!);
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET!, {
+        expiresIn: TOKEN_TTL,
+    });
 
     return res.status(200).json({
         success: true,
         data: {
         token,
-        user,
+        user: publicUser(user),
         },
         error: null,
     });

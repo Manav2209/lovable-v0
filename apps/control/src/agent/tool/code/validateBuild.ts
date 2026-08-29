@@ -4,6 +4,7 @@ import { tool } from "langchain";
 import * as z from "zod";
 
 import { sendSSEMessage } from "../../../sse";
+import { runProcess, resolveSafePath } from "../security";
 import type { WorkflowState } from "../../graphs/workflow";
 
 
@@ -132,7 +133,18 @@ export const validateBuild = tool(
 
     try {
       const sharedDir = process.env.SHARED_DIR || "/app/shared";
-      const projectDir = path.join(sharedDir, projectId);
+      let projectDir: string;
+      try {
+        projectDir = resolveSafePath(sharedDir, projectId);
+      } catch (error) {
+        return {
+          success: false,
+          message: "Invalid project directory",
+          projectId,
+          userInstructions,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
 
       if (!fs.existsSync(projectDir)) {
         return {
@@ -181,108 +193,79 @@ export const validateBuild = tool(
         };
       }
 
-      const { spawn } = await import("child_process");
-
-      const installProcess = spawn("bun", ["install"], {
+      const install = await runProcess("bun", ["install"], {
         cwd: projectDir,
-        stdio: "pipe",
+        timeoutMs: 3 * 60_000,
       });
 
-      await new Promise((resolve, reject) => {
-        installProcess.on("close", (code) => {
-          if (code === 0) {
-            resolve(code);
-          } else {
-            reject(new Error("Failed to install dependencies"));
-          }
-        });
-        installProcess.on("error", reject);
-      });
+      if (!install.success) {
+        throw new Error(
+          `Failed to install dependencies: ${install.stderr || install.error || "unknown error"}`,
+        );
+      }
 
-      const buildProcess = spawn("bun", ["run", "build"], {
+      const build = await runProcess("bun", ["run", "build"], {
         cwd: projectDir,
-        stdio: "pipe",
+        timeoutMs: 5 * 60_000,
       });
 
-      return new Promise((resolve) => {
-        let stdout = "";
-        let stderr = "";
+      const stdout = build.stdout || "";
+      const stderr = build.stderr || "";
 
-        buildProcess.stdout?.on("data", (data) => {
-          stdout += data.toString();
-        });
-
-        buildProcess.stderr?.on("data", (data) => {
-          stderr += data.toString();
-        });
-
-        buildProcess.on("close", (code) => {
-          if (code === 0) {
-            const distDir = path.join(projectDir, "dist");
-            if (fs.existsSync(distDir)) {
-              resolve({
-                success: true,
-                message: "Build validation successful",
-                projectId,
-                userInstructions,
-                buildOutput: stdout,
-                errors: [],
-                errorAnalysis: {
-                  totalErrors: 0,
-                  criticalCount: 0,
-                  majorCount: 0,
-                  minorCount: 0,
-                  fixableCount: 0,
-                  canAttemptFix: false,
-                  errorsByType: {},
-                },
-              });
-            } else {
-              resolve({
-                success: false,
-                message: "Build completed but no dist directory found",
-                projectId,
-                userInstructions,
-                error: "Missing build output directory",
-                errors: [{
-                  type: "missing_file",
-                  severity: "critical",
-                  message: "dist directory not found after build",
-                  fixable: true,
-                }],
-              });
-            }
-          } else {
-            const parsedErrors = parseAndCategorizeBuildErrors(stderr, stdout);
-            const errorAnalysis = categorizeBuildResult(parsedErrors);
-
-            console.log('[validateBuild] Build failed with exit code:', code);
-            console.log('[validateBuild] Parsed errors:', parsedErrors.length);
-            console.log('[validateBuild] stderr:', stderr.substring(0, 500));
-
-            resolve({
-              success: false,
-              message: `Build failed with ${parsedErrors.length} error(s)`,
-              projectId,
-              userInstructions,
-              error: stderr || stdout || "Build failed",
-              buildOutput: stderr + "\n" + stdout,
-              errors: parsedErrors,
-              errorAnalysis,
-            });
-          }
-        });
-
-        buildProcess.on("error", (error) => {
-          resolve({
-            success: false,
-            message: "Build process error",
+      if (build.success) {
+        const distDir = path.join(projectDir, "dist");
+        if (fs.existsSync(distDir)) {
+          return {
+            success: true,
+            message: "Build validation successful",
             projectId,
             userInstructions,
-            error: error.message,
-          });
-        });
-      });
+            buildOutput: stdout,
+            errors: [],
+            errorAnalysis: {
+              totalErrors: 0,
+              criticalCount: 0,
+              majorCount: 0,
+              minorCount: 0,
+              fixableCount: 0,
+              canAttemptFix: false,
+              errorsByType: {},
+            },
+          };
+        } else {
+          return {
+            success: false,
+            message: "Build completed but no dist directory found",
+            projectId,
+            userInstructions,
+            error: "Missing build output directory",
+            errors: [{
+              type: "missing_file",
+              severity: "critical",
+              message: "dist directory not found after build",
+              fixable: true,
+            }],
+          };
+        }
+      } else {
+        const parsedErrors = parseAndCategorizeBuildErrors(stderr, stdout);
+        const errorAnalysis = categorizeBuildResult(parsedErrors);
+
+        console.log('[validateBuild] Build failed with exit code:', build.exitCode);
+        console.log('[validateBuild] Parsed errors:', parsedErrors.length);
+        console.log('[validateBuild] stderr:', stderr.substring(0, 500));
+
+        return {
+          success: false,
+          message: `Build failed with ${parsedErrors.length} error(s)`,
+          projectId,
+          userInstructions,
+          error: stderr || stdout || build.error || "Build failed",
+          buildOutput: stderr + "\n" + stdout,
+          errors: parsedErrors,
+          errorAnalysis,
+        };
+      }
 
     } catch (error) {
       console.error("Error in validateBuild:", error);

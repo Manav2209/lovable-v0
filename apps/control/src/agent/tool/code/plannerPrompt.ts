@@ -52,13 +52,7 @@ export const plannerPromptTool = tool(
 
 export async function planerNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
   sendSSEMessage(state.clientId, {
-    _type: "planning",
-    get type() {
-      return this._type;
-    },
-    set type(value) {
-      this._type = value;
-    },
+    type: "planning",
     message: "Creating detailed execution plan with tool calls...",
   });
 

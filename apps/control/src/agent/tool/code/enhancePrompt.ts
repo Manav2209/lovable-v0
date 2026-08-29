@@ -2,6 +2,7 @@ import { tool } from "langchain";
 import * as z from "zod";
 import { model } from "../../client";
 import { sendSSEMessage } from "../../../sse";
+import { SYSTEM_PROMPTS } from "../../../prompt/systemPrompt";
 import type { WorkflowState } from "../../graphs/workflow";
 
 
@@ -19,7 +20,7 @@ export const enhancePrompt = tool(
         {
           role: "user",
           content:
-            enhancePrompt +
+            SYSTEM_PROMPTS.ENHANCED_PROMPT +
             `\n\n Original Prompt: ${prompt}` +
             (contextInfo ? `\n\n Context Information: ${contextInfo}` : ""),
         },

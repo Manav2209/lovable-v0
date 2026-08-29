@@ -130,9 +130,10 @@ const EXTRACT_JSON = /(\{[\s\S]*\})/;
 
 function parseJudgeOutput(text: string): Omit<JudgeResult, "valid"> | null {
     const match = text.trim().match(EXTRACT_JSON);
-    if (!match) return null;
+    const raw = match?.[1];
+    if (!raw) return null;
     try {
-        const parsed = JSON.parse(match[1]);
+        const parsed = JSON.parse(raw);
         const clamp = (v: unknown): number => {
             const n = typeof v === "number" ? v : NaN;
             if (Number.isNaN(n)) return 0;

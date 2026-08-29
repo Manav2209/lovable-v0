@@ -5,6 +5,7 @@ import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
 import { sendSSEMessage } from "../../../sse";
+import { resolveSafePath } from "../security";
 import type { WorkflowState } from "../../graphs/workflow";
 
 export const IGNORE_PATTERNS = [
@@ -65,7 +66,19 @@ export const getContext = tool(
   async (input: z.infer<typeof getContextInput>) => {
     const { projectId, previousContext } = getContextInput.parse(input);
     const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
+    let projectDir: string;
+    try {
+      projectDir = resolveSafePath(sharedDir, projectId);
+    } catch (error) {
+      return {
+        context: {
+          projectId,
+          projectPath: null,
+          error: `Invalid project directory: ${error instanceof Error ? error.message : String(error)}`,
+          metadata: { lastModified: new Date().toISOString(), totalFiles: 0, buildStatus: "missing" },
+        },
+      };
+    }
 
     const context: Record<string, any> = {
       projectId,

@@ -2,9 +2,9 @@ import fs from "fs"
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
-import { spawn } from "node:child_process";
 import { sendSSEMessage } from "../../../sse";
 import { publishStreamEvent } from "../../../events/sink";
+import { runProcess, resolveSafePath } from "../security";
 import { ControlToOrchestrator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, PROJECT_RUN } from "types";
 import type { WorkflowState } from "../../graphs/workflow";
 
@@ -12,7 +12,22 @@ export const buildProjectAndNotifyToRun = async (
   projectId: string
 ) => {
   const sharedDir = process.env.SHARED_DIR || "/app/shared";
-  const dir = path.join(sharedDir, projectId);
+
+  let dir: string;
+  try {
+    dir = resolveSafePath(sharedDir, projectId);
+  } catch (error) {
+    console.error(`Invalid project path: ${error instanceof Error ? error.message : String(error)}`);
+
+    await publishStreamEvent(ControlToOrchestrator, {
+      data: JSON.stringify({
+        key: PROJECT_FAILED,
+        projectId,
+        error: "Invalid project directory",
+      }),
+    })
+    return false;
+  }
 
   if (!fs.existsSync(dir)) {
     console.error(`Project directory not found: ${dir}`);
@@ -42,21 +57,14 @@ export const buildProjectAndNotifyToRun = async (
   }
 
   try {
-    const installProc = spawn("bun", ["install"], { cwd: dir });
-
-    let installStderr = "";
-    installProc.stderr.on("data", (chunk) => {
-      installStderr += chunk.toString();
+    const install = await runProcess("bun", ["install"], {
+      cwd: dir,
+      timeoutMs: 3 * 60_000,
     });
 
-    const installCode = await new Promise((resolve) => {
-      installProc.on("close", (code) => resolve(code));
-      installProc.on("error", () => resolve(1));
-    });
-
-    if (installCode !== 0) {
+    if (!install.success) {
+      const installStderr = install.stderr || install.error || "unknown error";
       console.error(`Failed to install dependencies: ${installStderr}`);
-      
 
       await publishStreamEvent(ControlToOrchestrator, {
         data: JSON.stringify({
@@ -68,18 +76,13 @@ export const buildProjectAndNotifyToRun = async (
       return false;
     }
 
-    const buildProc = spawn("bun", ["run", "build"], { cwd: dir });
-    let buildStderr = "";
-    buildProc.stderr.on("data", (chunk) => {
-      buildStderr += chunk.toString();
+    const build = await runProcess("bun", ["run", "build"], {
+      cwd: dir,
+      timeoutMs: 5 * 60_000,
     });
 
-    const buildCode = await new Promise((resolve) => {
-      buildProc.on("close", (code) => resolve(code));
-      buildProc.on("error", () => resolve(1));
-    });
-
-    if (buildCode !== 0) {
+    if (!build.success) {
+      const buildStderr = build.stderr || build.error || "unknown error";
       console.error(`Failed to build project: ${buildStderr}`);
 
       await publishStreamEvent(ControlToOrchestrator, {
