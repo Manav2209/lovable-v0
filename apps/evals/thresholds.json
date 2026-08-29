@@ -1,0 +1,17 @@
+{
+  "average": 75,
+  "cases": {
+    "counter-basic": 87,
+    "landing-page": 88,
+    "todo-basic": 87,
+    "dashboard-cards": 67,
+    "weather-display": 18,
+    "multi-page-nav": 83,
+    "kanban-board": 90,
+    "crud-contacts": 22,
+    "analytics-charts": 90,
+    "blog-crud": 90,
+    "product-grid": 90,
+    "recipe-finder": 90
+  }
+}

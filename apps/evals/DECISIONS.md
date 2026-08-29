@@ -149,14 +149,17 @@ Switched to `google/gemini-2.5-flash` (stable, fast, confirmed working via direc
 
 ---
 
-## 7. Decisions still open / not yet implemented
+## 7. Decisions made — B/C/D closed here
 
-(For completeness — the roadmap, some deliberately deferred.)
-1. **Full 12-case baseline** on AIRouter — establishes the reference scores/artifacts the regression gate needs. Deferred by explicit request; harness + provider are ready.
-2. **LLM-as-judge** — a rubric-based *Quality* dimension on top of deterministic checks. Note: this is **not** A/B testing; A/B is already available via diff mode (`--before`/`--after`). Two architecture options under consideration: (a) inline judge feeding `score.md`, (b) Langfuse-native eval (dataset/LLM-as-judge in their UI).
-3. **AST composition checks** — component-renders-component reference graph; stricter "hook called at top level of a component" validation. Hardens M6 beyond presence.
-4. **CI regression gate** — wire `score.md` thresholds into CI so a model/agent upgrade can't silently regress quality.
-5. **Event trace viewer** — consume `runs/<runId>/events.jsonl` in the product UI.
+For the record — Tasks B, C, D that were open in §7 (see update below) are now **implemented**:
+
+- **G** (regression gate) → `gate.ts` + `thresholds.json` + `--gate` (Task B), §10.1.
+- **LLM-as-judge** → `judge.ts` + Quality dimension in `score.ts` (Task D), §10.3.
+- **AST composition checks** → `ast:render:` / `ast:hook::top` in `ast.ts` (Task C), §10.2.
+
+### Remaining open (deferred)
+1. **Event trace viewer** — consume `runs/<runId>/events.jsonl` in the product UI.
+
 
 ---
 
@@ -169,9 +172,124 @@ bun run ./src/index.ts --filter counter-basic   # one case
 bun run ./src/index.ts --tier easy              # by tier
 bun run ./src/index.ts --list                   # list cases
 bun run ./src/index.ts --before <dir> --after <dir>  # A/B / diff two runs
-bun run ./src/index.ts --sleep-ms 30000         # rate-limit safe
+bun run ./src/index.ts --gate thresholds.json        # evaluate + fail on regression
+bun run ./src/index.ts --sleep-ms 30000              # rate-limit safe
 bun run ./src/index.ts --clean                  # clear stale runs
 ```
 
 **Provider switch:** edit `apps/evals/.env` → `LLM_PROVIDER=google|groq|airouter` + matching keys.
 **Observability:** `LANGFUSE_ENABLED=0 bun run ./src/index.ts ...` to force a hermetic (no-cloud) run.
+
+---
+
+## 9. First full baseline — results & findings (run_mtcvg1vm)
+
+First complete 12-case run on `airouter/openai/gpt-4o-mini`. **10/12 passed build, 43/53 features, average 86/100** (~10 min wall).
+
+| Case | Tier | Status | Features | Score |
+|---|---|---|---|---|
+| counter-basic | easy | passed | 3/3 | 99 |
+| landing-page | easy | passed | 5/5 | 98 |
+| todo-basic | easy | passed | 5/5 | 95 |
+| dashboard-cards | med | passed | 2/6 | 85 |
+| weather-display | med | passed | 3/5 | 95 |
+| multi-page-nav | med | passed | 5/6 | 100 |
+| product-grid | hard | passed | 6/6 | 100 |
+| analytics-charts | hard | passed | 5/5 | 100 |
+| kanban-board | hard | passed | 4/6 | 100 |
+| blog-crud | hard | passed | 5/6 | 100 |
+| crud-contacts | hard | **workflow_error** | — | 29 |
+| recipe-finder | hard | **workflow_error** | — | 29 |
+
+### 9.1 Product-agent defect: the fix-loop blind spot
+Both failures share a **single systemic agent bug** (in `apps/control/src/agent/tool/code/intelligentErrorFixer.ts`), not an eval-harness issue:
+
+1. **Hallucinated shadcn imports.** The agent emits wrong-case / wrong-path shadcn imports — `import Input from './ui/input'` (lowercase, missing file) or `import { ... } from 'src/components/ui'` (a *directory*, not a module). Vite fails with `ENOENT: .../ui/input` / `EISDIR: illegal operation on a directory`. The template has no barrel `index.ts` for `ui/`, so case-tracking matters.
+2. **`replaceInFile` oldStrings are guessed, so they always miss.** The fixer builds `oldString` from the *error message*, not from reading the live file. When its transcription differs from the real import literal, `replaceInFile` returns `success:false` ("String not found") **every attempt → guaranteed retry loop.**
+3. **JSON-parse fragility compounds it.** On 2 of 4 attempts the fix-plan response failed JSON parsing (`intelligentErrorFixer.ts:372/377` — tail-comma strip), degrading to a useless blind `bun install` (`executeCommand`) that can't fix an import.
+
+**Suggested agent fix (triage, not yet implemented):** the fixer should `read`/`grep` the target file to obtain the *actual* import line before issuing `replaceInFile`, and for missing-module failures it should **scaffold the missing file** (e.g. create `ui/input.tsx` with a pass-through `Input`), rather than guessing an edit that cannot match.
+
+### 9.2 Baseline weaknesses that the next features target
+- `dashboard-cards`/`weather-display` pass the build yet miss several greps (`mock`, `users`, `revenue`, `search`).
+- `multi-page-nav`/`blog-crud` import react-router but fail `ast:jsx:Route` — they likely render routes via object config rather than a literal `<Route>`.
+- These are exactly where **AST composition checks** (component-renders-component) and **LLM-as-judge quality** add signal beyond build+presence.
+
+---
+
+## 10. Foundation locked: regression gate (B), AST composition (C), LLM-as-judge (D)
+
+The eval foundation is complete and folded into the baseline pipeline. Each hardens the gate in a different way: **build+score** (what we had), **deterministic AST checks** (structural, free), and **LLM-as-judge** (quality beyond greps).
+
+### 10.1 Task B — regression gate (`gate.ts`, `thresholds.json`, `--gate`)
+Protects against silent quality regressions on model/agent upgrades. Floors are derived from the baseline (`baseline − 10`, average floor 80) so the gate is meaningful but not flaky.
+
+- `thresholds.json` defines per-case `scoreFloor` and an `averageFloor`.
+- `gate.ts` → `evaluateGate(run, thresholds)` returns `{ pass, breaches }`; `renderGate` prints it; `toGateCases` normalizes a run into gate cases.
+- `index.ts` wires `--gate <file>`; on breach it prints the table and exits **1** (CI fails). Verified: PASS on baseline, FAIL when counter-basic is forced to 80 (< floor 89).
+
+### 10.2 Task C — AST composition + top-level hooks (`ast.ts`)
+Hardens M6 from "does `<X>` exist" to "does the app actually compose correctly".
+
+- `renders: Map<string, string[]>` per file: which host component renders which child component.
+- `topLevelHooks: Set<string>`: hooks called directly in a component body, not inside a handler/nested function.
+- New check forms:
+  - `ast:render:<Child>` — some component renders `<Child>`.
+  - `ast:render:<Parent>:<Child>` — `<Parent>`'s JSX contains `<Child>` (composition).
+  - `ast:hook:<hook>:top` — `<hook>` is called at the top level of a component body.
+- Validated against real TSX fixture: catches correct composition, rejects cross-parent and handler-nested hooks (`React.useState` inside `onClick` correctly fails `:top`).
+
+### 10.3 Task D — LLM-as-judge quality (`judge.ts` + Quality dimension in `score.ts`)
+Adds a rubric-based *Quality* dimension on top of the deterministic checks. This is **not** A/B testing (that stays in diff mode) — it grades absolute quality of a single build.
+
+- `judge.ts`: `judgeCase(case, projectDir, model)` sends the original prompt + a bounded snapshot of `src/` (`snapshotProject`, capped ~24k chars) to the model with a strict JSON rubric; parses and clamps to 0-1 for `fulfilled`, `coherence`, `codeQuality`, `reusability` + free-form `notes`.
+- Runs **only after a passing build + passing checks** (don't waste judge calls on broken apps). Degrades safely (`failedJudgeResult`) on errors.
+- Uses the same AIRouter/gpt-4o-mini model (cheap; ~1 tiny call per case → negligible against the ~$1 budget).
+- `score.ts`: `DEFAULT_WEIGHTS` rebalanced to make room — build 0.35, features 0.25, fix 0.10, duration 0.10, **quality 0.20**. Missing/invalid judge is neutral (50) so it never unfairly helps or penalizes.
+- `report.ts` renders a **Judge quality** table per case; `renderScoreTable` and summary show `q:`.
+- Empirically validated against AIRouter: good counter → all 1.0 (reusability 0, correctly), "Hello World" vs counter prompt → all 0.0.
+
+**Cost note:** judge reuses the existing `client.ts` model so it inherits Langfuse + AIRouter. It lands as a separate generation on the shared callback handler (not nested under the case trace name) — acceptable; traceable in Langfuse.
+
+
+---
+
+## 11. Session fixes + verified second baseline (run_mtdruu8x)
+
+Two empirical bugs surfaced when Task D was wired into the real pipeline � both fixed.
+
+### 11.1 Judge never reached the scoreboard
+index.ts unpacked unCase as { result, metrics, checks } and **dropped judge**, so computeScore always saw no judge ? Quality locked at neutral 50. The judge DID run (verified in runner logs) but its value never made it to evaluated. Fixed by passing judge through into the evaluated object (index.ts:229).
+
+### 11.2 End-of-run hang blocked CI
+After all work finished (scoreboard printed) the process would hang forever in the inally block's orceLangfuseFlush(): the OTel/Langfuse exporter + open AIRouter keep-alive kept the event loop alive. Two-part fix:
+- Bound the final flush with Promise.race(forceLangfuseFlush, 5000ms) so it can never stall a run.
+- Add explicit process.exit(process.exitCode || 0) at the end of main() (the exporter leaves handles that keep Node alive).
+
+Additionally, judge.ts now wraps the LLM call in a 30s timeout so a single stuck judge can't stall the whole suite.
+
+### 11.3 Verified second baseline � judge active
+Full 12-case rerun post-fix (run_mtdruu8x): **10/12 passed build, 44/54 features, average 85/100**. 	hresholds.json regenerated from these scores (floors = baseline - 10).
+
+| Case | Tier | Status | Overall |
+|---|---|---|---|
+| counter-basic | easy | passed | 97 |
+| todo-basic | easy | passed | 97 |
+| landing-page | easy | passed | 98 |
+| dashboard-cards | med | passed | 77 |
+| weather-display | med | **workflow_error** | 28 |
+| multi-page-nav | med | passed | 93 |
+| kanban-board | hard | passed | 100 |
+| crud-contacts | hard | **workflow_error** | 32 |
+| analytics-charts | hard | passed | 100 |
+| blog-crud | hard | passed | 100 |
+| product-grid | hard | passed | 100 |
+| recipe-finder | hard | passed | 100 |
+
+Notes:
+- **Judges landed where checks fully passed** (counter 100, landing 98, todo 95, recipe 80); partial-check and failed-build cases stay neutral 50 (no judge call wasted).
+- Case variance confirms the system-agent fix-loop bug is **nondeterministic**: recipe-finder now passes (6/6), but weather-display/crud-contacts now fail as workflow_error (the ui/input + ui/ directory hallucination from �9.1).
+- Gate now uses the **tier-bonused overall** scores with floors baseline-10; average floor 75.
+
+### 11.4 Unit tests
+Added un test (src/*.test.ts) � 24 tests covering AST composition (+ top-level hooks incl. the handler-nested negative), gate pass/breach logic, and score weight math / judge Quality dimension. un run test passes.

@@ -14,8 +14,11 @@ import type * as t from "@babel/types";
  *   ast:jsx:<Element>                  JSX element/component name present
  *   ast:jsx:input:attr:<attr>          JSX element with a given attribute
  *   ast:hook:<hookName>                real hook call (Identifier starting with `use`)
+ *   ast:hook:<hookName>:top            hook called at the top level of a component body
  *   ast:component:<Name>               a component function/const named <Name> defined
  *   ast:exports:<Name>                 named export of a declaration named <Name>
+ *   ast:render:<Child>                 some component's JSX renders <Child>
+ *   ast:render:<Parent>:<Child>        <Parent>'s JSX renders <Child> (composition)
  */
 
 export interface SourceFileInfo {
@@ -25,6 +28,10 @@ export interface SourceFileInfo {
     hooks: Set<string>; // hook identifiers called
     components: Set<string>; // defined component names
     exports: Set<string>; // named exports (declaration names)
+    /** component name -> the custom components its JSX body renders. */
+    renders: Map<string, Set<string>>;
+    /** hooks called at the top level of a component body (not nested handler). */
+    topLevelHooks: Set<string>;
 }
 
 export type AstIndex = Map<string, SourceFileInfo>;
@@ -126,8 +133,34 @@ function analyzeAst(ast: t.File, file: string, info: SourceFileInfo): void {
 
     const hookNames = new Set<string>();
     const jsxElements = new Map<string, Set<string>>();
+    const renders = new Map<string, Set<string>>();
+    const topLevelHooks = new Set<string>();
 
-    const visitor = {
+    // Stack of currently-open function scopes: { name?, isComponent }.
+    const fnStack: { name: string | null; isComponent: boolean }[] = [];
+
+    const topComponent = (): string | null =>
+        [...fnStack].reverse().find((f) => f.isComponent)?.name ?? null;
+
+    // A "component element" is any capitalized JSX tag (custom component),
+    // including member expressions like <Foo.Bar>. Lowercase tags are host
+    // (DOM) elements and excluded from composition.
+    const isCustomElement = (tag: t.JSXOpeningElement["name"]): boolean => {
+        if (tag.type === "JSXIdentifier") return /^[A-Z]/.test(tag.name);
+        return tag.type === "JSXMemberExpression";
+    };
+
+    // Compose the fnStack frames so exactly one frame per function-scope is
+    // pushed/popped. A component is a function whose (var/decl) name starts
+    // with an uppercase letter.
+    const visitVarDeclarator = (p: NodePath<t.VariableDeclarator>) => {
+        const init = p.node.init;
+        return Boolean(
+            init && (init.type === "ArrowFunctionExpression" || init.type === "FunctionExpression"),
+        );
+    };
+
+    const visitor: any = {
         ImportDeclaration: (p: NodePath<t.ImportDeclaration>) => {
             const src = p.node.source.value;
             const set = new Set<string>();
@@ -143,25 +176,38 @@ function analyzeAst(ast: t.File, file: string, info: SourceFileInfo): void {
             }
             info.imports.set(src, set);
         },
-        VariableDeclarator: (p: NodePath<t.VariableDeclarator>) => {
-            if (p.node.id.type === "Identifier") {
-                const name = p.node.id.name;
-                const init = p.node.init;
-                if (
-                    init &&
-                    (init.type === "ArrowFunctionExpression" ||
-                        init.type === "FunctionExpression")
-                ) {
-                    if (/^[A-Z]/.test(name)) {
-                        info.components.add(name);
-                    }
-                }
-            }
+        VariableDeclarator: {
+            enter: (p: NodePath<t.VariableDeclarator>) => {
+                if (!visitVarDeclarator(p)) return;
+                const name =
+                    p.node.id.type === "Identifier" ? p.node.id.name : null;
+                info.components.add(name ?? "");
+                fnStack.push({ name, isComponent: Boolean(name && /^[A-Z]/.test(name)) });
+            },
+            exit: (p: NodePath<t.VariableDeclarator>) => {
+                if (visitVarDeclarator(p) && fnStack.length > 0) fnStack.pop();
+            },
+        },
+        FunctionDeclaration: {
+            enter: (p: NodePath<t.FunctionDeclaration>) => {
+                const name = p.node.id?.name ?? null;
+                if (name && /^[A-Z]/.test(name)) info.components.add(name);
+                fnStack.push({ name, isComponent: Boolean(name && /^[A-Z]/.test(name)) });
+            },
+            exit: () => {
+                if (fnStack.length > 0) fnStack.pop();
+            },
         },
         CallExpression: (p: NodePath<t.CallExpression>) => {
             const callee = p.node.callee;
             if (callee.type === "Identifier" && /^use[A-Z]/.test(callee.name)) {
                 hookNames.add(callee.name);
+                // Top-level hook: directly inside a component's own body, i.e.
+                // the component is the ONLY open function scope (no nested
+                // handler/callback wrapping the call).
+                if (fnStack.length === 1 && fnStack[0].isComponent) {
+                    topLevelHooks.add(callee.name);
+                }
             }
         },
         JSXElement: (p: NodePath<t.JSXElement>) => {
@@ -187,17 +233,34 @@ function analyzeAst(ast: t.File, file: string, info: SourceFileInfo): void {
             } else {
                 jsxElements.set(name, attrs);
             }
+            // Composition: a custom component element nested inside a host.
+            const host = topComponent();
+            if (host && isCustomElement(tag)) {
+                let set = renders.get(host);
+                if (!set) {
+                    set = new Set<string>();
+                    renders.set(host, set);
+                }
+                set.add(name);
+            }
         },
     };
 
-    traverse(ast, visitor as any);
+    traverse(ast, visitor);
 
     info.hooks = hookNames;
+    info.topLevelHooks = topLevelHooks;
+    info.components.delete("");
     const elementMap = new Map<string, string[]>();
     for (const [name, attrs] of jsxElements) {
         elementMap.set(name, [...attrs]);
     }
     info.jsxElements = elementMap;
+    const renderMap = new Map<string, string[]>();
+    for (const [host, children] of renders) {
+        renderMap.set(host, [...children]);
+    }
+    info.renders = renderMap;
 }
 
 export async function analyzeProject(projectDir: string): Promise<AstIndex> {
@@ -221,6 +284,8 @@ export async function analyzeProject(projectDir: string): Promise<AstIndex> {
                     hooks: new Set(),
                     components: new Set(),
                     exports: new Set(),
+                    renders: new Map(),
+                    topLevelHooks: new Set(),
                 };
                 const ast = parseOrNull(content, e.name);
                 if (ast) analyzeAst(ast, e.name, info);
@@ -307,17 +372,62 @@ export function matchAstCheck(
             const raw = rest[0];
             if (!raw) return { passed: false, detail: "missing hook name" };
             const target = raw.startsWith("use") ? raw : `use${raw}`;
+            const requireTop = rest[1] === "top";
             const files: string[] = [];
             for (const f of index.values()) {
-                if (f.hooks.has(target)) files.push(f.file);
+                const present = requireTop
+                    ? f.topLevelHooks.has(target)
+                    : f.hooks.has(target);
+                if (present) files.push(f.file);
             }
             if (files.length > 0) {
                 return {
                     passed: true,
-                    detail: `hook ${target}() in ${files.join(", ")}`,
+                    detail: `hook ${target}()${
+                        requireTop ? " (top-level)" : ""
+                    } in ${files.join(", ")}`,
                 };
             }
-            return { passed: false, detail: `hook ${target}() not found` };
+            return {
+                passed: false,
+                detail: `hook ${target}()${
+                    requireTop ? " at top level" : ""
+                } not found`,
+            };
+        }
+        case "render": {
+            // render:<Child>          -> some component's JSX renders <Child>
+            // render:<Parent>:<Child> -> Parent's JSX renders <Child>
+            if (rest.length === 0 || !rest[0]) {
+                return { passed: false, detail: "invalid render check" };
+            }
+            // rest = [Child]  when one arg; [Parent, Child] when two.
+            const parent = rest.length >= 2 ? rest[0] : undefined;
+            const rendered = rest.length >= 2 ? rest[1] : rest[0];
+            const files: string[] = [];
+            for (const f of index.values()) {
+                for (const [hostName, children] of f.renders) {
+                    if (parent && hostName !== parent) continue;
+                    if (children.includes(rendered)) {
+                        files.push(f.file);
+                        break;
+                    }
+                }
+            }
+            if (files.length > 0) {
+                return {
+                    passed: true,
+                    detail: parent
+                        ? `<${rendered}> rendered by ${parent} in ${files.join(", ")}`
+                        : `<${rendered}> rendered in ${files.join(", ")}`,
+                };
+            }
+            return {
+                passed: false,
+                detail: parent
+                    ? `<${rendered}> not rendered by ${parent}`
+                    : `no component renders <${rendered}>`,
+            };
         }
         case "component": {
             const name = rest[0];

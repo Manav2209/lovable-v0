@@ -15,6 +15,7 @@ export interface EvaluatedCase {
     result: CaseResult;
     metrics: EvalMetrics;
     checks?: CheckResult;
+    judge?: import("./judge").JudgeResult;
 }
 
 export function printSummary(report: EvalReport): void {
@@ -39,6 +40,15 @@ export function printSummary(report: EvalReport): void {
                     console.log(`      ✘ ${f.feature} — ${f.detail}`);
                 }
             }
+        }
+        if (c.judge?.valid) {
+            console.log(
+                `      q ${Math.round(
+                    ((c.judge.fulfilled + c.judge.coherence + c.judge.codeQuality + c.judge.reusability) /
+                        4) *
+                        100,
+                )}/100 — ${c.judge.notes.slice(0, 80)}`,
+            );
         }
     }
 
@@ -107,6 +117,24 @@ export async function writeReport(
             for (const f of c.checks.features) {
                 lines.push(`| ${f.feature} | ${f.passed ? "✔" : "✘"} | ${f.detail ?? ""} |`);
             }
+        }
+
+        if (c.judge?.valid) {
+            const j = c.judge;
+            const avg = (
+                ((j.fulfilled + j.coherence + j.codeQuality + j.reusability) / 4) *
+                100
+            ).toFixed(0);
+            lines.push("");
+            lines.push(`### Judge quality (${avg}/100)`);
+            lines.push("");
+            lines.push(`| Dimension | Score |`);
+            lines.push(`|-----------|-------|`);
+            lines.push(`| Fulfilled | ${(j.fulfilled * 100).toFixed(0)}/100 |`);
+            lines.push(`| Coherence | ${(j.coherence * 100).toFixed(0)}/100 |`);
+            lines.push(`| Code quality | ${(j.codeQuality * 100).toFixed(0)}/100 |`);
+            lines.push(`| Reusability | ${(j.reusability * 100).toFixed(0)}/100 |`);
+            lines.push(`| Notes | ${j.notes} |`);
         }
         lines.push("");
     }

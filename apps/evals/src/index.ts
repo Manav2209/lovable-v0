@@ -5,7 +5,13 @@ import { selectCases, type EvalTier } from "./dataset";
 import { printSummary, writeReport, type EvalReport, type EvaluatedCase } from "./report";
 import { cleanupRunDir, cleanupRunWorkspaces } from "./offline/workspace";
 import { compareRuns, loadRun, printDiff, writeDiff } from "./diff";
-import { computeScoredCases, renderScoreTable, writeScoreBoard } from "./score";
+import { computeScoredCases, renderScoreTable, writeScoreBoard, type ScoredCase } from "./score";
+import {
+    loadThresholds,
+    evaluateGate,
+    renderGate,
+    toGateCases,
+} from "./gate";
 
 interface CliArgs {
     filter?: string;
@@ -16,6 +22,7 @@ interface CliArgs {
     clean: boolean;
     before?: string;
     after?: string;
+    gate?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -41,6 +48,9 @@ function parseArgs(argv: string[]): CliArgs {
                 break;
             case "--clean":
                 args.clean = true;
+                break;
+            case "--gate":
+                args.gate = argv[++i];
                 break;
             case "--before":
                 args.before = argv[++i];
@@ -162,6 +172,11 @@ async function main() {
     const evaluated: EvaluatedCase[] = [];
     const aborted = false;
 
+    // Latest computed scores (set by emitReport) so the gate can reuse them.
+    const scored: ScoredCase[] = [];
+    const tierOf: Record<string, string> = {};
+    for (const c of cases) tierOf[c.id] = c.tier;
+
     async function emitReport() {
         if (evaluated.length === 0) return;
         const report: EvalReport = {
@@ -174,6 +189,8 @@ async function main() {
         printSummary(report);
 
         const scores = computeScoredCases(cases, evaluated);
+        scored.length = 0;
+        scored.push(...scores);
         for (const line of renderScoreTable(scores)) console.log(line);
         await writeScoreBoard(runDir, runId, scores);
 
@@ -209,13 +226,13 @@ async function main() {
     try {
         for (const c of cases) {
             process.stdout.write(`▶ ${c.id} ... `);
-            const { result, metrics, checks } = await runCase(c, {
+            const { result, metrics, checks, judge } = await runCase(c, {
                 runId,
                 runDir,
                 timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
                 maxFixAttempts: c.maxFixAttempts,
             });
-            evaluated.push({ result, metrics, checks });
+            evaluated.push({ result, metrics, checks, judge });
 
             const icon = result.status === "passed_build" ? "✔" : "✘";
             const checkStr = checks
@@ -241,7 +258,10 @@ async function main() {
                 const { forceLangfuseFlush } = await import(
                     "@control/observability/instrumentation"
                 );
-                await forceLangfuseFlush();
+                await Promise.race([
+                    forceLangfuseFlush(),
+                    new Promise((r) => setTimeout(r, 5000)),
+                ]);
             } catch {
                 /* sink unavailable */
             }
@@ -250,6 +270,26 @@ async function main() {
 
     const passed = evaluated.filter((c) => c.result.status === "passed_build").length;
     if (passed < evaluated.length) process.exitCode = 1;
+
+    // Regression gate (--gate <file>): fails CI if thresholds are breached.
+    if (args.gate) {
+        let thresholds;
+        try {
+            thresholds = await loadThresholds(args.gate);
+        } catch (err) {
+            console.error(`\nCould not load gate thresholds: ${err instanceof Error ? err.message : err}`);
+            process.exitCode = 1;
+            throw err;
+        }
+        const gateCases = toGateCases(scored, tierOf);
+        const gate = evaluateGate(gateCases, thresholds);
+        for (const line of renderGate(gate, gateCases)) console.log(line);
+        if (!gate.passed) process.exitCode = 1;
+    }
+
+    // Explicit exit: the OTel/Langfuse exporter and AIRouter keep-alive leave
+    // the event loop alive after all work is done, so force a clean exit.
+    process.exit(process.exitCode || 0);
 }
 
 main().catch((err) => {
