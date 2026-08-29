@@ -1,7 +1,7 @@
 import fs from "fs";
 import { tool } from "langchain";
-import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const lineReplaceInput = z.object({
     filePath: z.string().describe("The path to the file to modify"),
@@ -14,10 +14,7 @@ const lineReplaceInput = z.object({
 export const lineReplace = tool(
     async (input: z.infer<typeof lineReplaceInput>) => {
         const { filePath, search, firstReplacedLine, lastReplacedLine, replace } = lineReplaceInput.parse(input);
-        const projectId = process.env.PROJECT_ID || "";
-        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
-        const fullPath = path.resolve(projectDir, filePath);
+        const fullPath = resolveSafePath(getProjectDir(), filePath);
 
         try {
             if (!fs.existsSync(fullPath)) {

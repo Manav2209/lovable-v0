@@ -4,6 +4,7 @@ import path from "path";
 import * as z from "zod";
 import { glob } from "glob";
 import { IGNORE_PATTERNS } from "../..";
+import { getProjectDir, resolveSafePath } from "../security";
 
 
 const grepSearchInput = z.object({
@@ -15,10 +16,16 @@ const grepSearchInput = z.object({
 export const grepSearch = tool(
     async (input: z.infer<typeof grepSearchInput>) => {
         const { pattern, globPattern, searchPath } = grepSearchInput.parse(input);
-        const projectId = process.env.PROJECT_ID || "";
-        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
-        const searchDir = searchPath ? path.resolve(projectDir, searchPath) : projectDir;
+        const searchDir = searchPath
+            ? resolveSafePath(getProjectDir(), searchPath)
+            : getProjectDir();
+
+        if (globPattern?.includes("..")) {
+            return { success: false, error: `Invalid glob pattern: "${globPattern}"`, matches: [] };
+        }
+        if (pattern.includes("..")) {
+            return { success: false, error: `Invalid search pattern: "${pattern}"`, matches: [] };
+        }
 
         try {
             const globPatternToUse = globPattern || "**/*";

@@ -31,8 +31,11 @@ export interface WorkflowState {
     errorAnalysis?: any;
     fixAttempts: number;
     // Optional cap on auto-fix iterations. When set, the loop stops once
-    // fixAttempts reaches this budget (production defaults to unlimited).
+    // fixAttempts reaches this budget. Production sets it in processPrompt.
     maxFixAttempts?: number;
+    // When supplied, the workflow stops issuing new work as soon as the
+    // signal is aborted (used to cancel eval cases on timeout).
+    abortSignal?: AbortSignal;
     completed: boolean;
     error?: string;
     messages: Array<{ role: string; content: string }>;
@@ -50,6 +53,12 @@ export interface WorkflowState {
         buildStatus: string;
         summary: string;
     };
+}
+
+const ABORT_ERROR = "workflow aborted (eval timeout)";
+
+function isAborted(state: WorkflowState): boolean {
+    return state.abortSignal?.aborted === true;
 }
 
 async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
@@ -79,6 +88,14 @@ async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>
     );
 
     for (const toolCall of toolCalls) {
+        if (isAborted(state)) {
+            sendSSEMessage(state.clientId, {
+                type: "aborted",
+                message: "Workflow aborted — skipping remaining tools",
+            });
+            break;
+        }
+
         sendSSEMessage(state.clientId, {
             type: "tool_executing",
             message: `Executing: ${toolCall.tool}`,
@@ -185,13 +202,22 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             throw new Error(`Failed to create plan: ${state.error}`);
         }
 
+        if (isAborted(state)) {
+            state.error = ABORT_ERROR;
+            state.completed = false;
+            return state;
+        }
+
         while (
             !state.completed &&
             !state.error &&
+            !isAborted(state) &&
             (state.maxFixAttempts == null || state.fixAttempts < state.maxFixAttempts)
         ) {
             const executeResult = await executeNode(state);
             state = { ...state, ...executeResult };
+
+            if (isAborted(state)) break;
 
             // Always compose generated components into App.tsx before validate/build.
             const stitchResult = await stitchAppNode(state);
@@ -200,9 +226,13 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             const validateResult = await validateNode(state);
             state = { ...state, ...validateResult };
 
+            if (isAborted(state)) break;
+
             if (state.buildStatus === "success") {
                 const testResult = await testBuildNode(state);
                 state = { ...state, ...testResult };
+
+                if (isAborted(state)) break;
 
                 if (state.buildStatus === "tested") {
                     sendSSEMessage(state.clientId, {
@@ -236,6 +266,12 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
                 break;
             }
 
+            if (isAborted(state)) {
+                state.error = ABORT_ERROR;
+                state.completed = false;
+                break;
+            }
+
             if (state.noFixesAvailable) {
                 state.error = "Unable to generate fixes for the errors. The LLM could not determine how to fix the issues.";
                 sendSSEMessage(state.clientId, {
@@ -247,7 +283,10 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         }
 
         if (!state.completed && !state.error) {
-            if (
+            if (isAborted(state)) {
+                state.error = ABORT_ERROR;
+                state.completed = false;
+            } else if (
                 state.maxFixAttempts != null &&
                 state.fixAttempts >= state.maxFixAttempts
             ) {
@@ -261,9 +300,16 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             }
         }
 
-        if (state.toolResults && state.toolResults.length > 0) {
+        if (state.toolResults && state.toolResults.length > 0 && !isAborted(state)) {
             const summaryResult = await summarizeChangesNode(state);
             state = { ...state, ...summaryResult };
+        }
+
+        if (isAborted(state)) {
+            sendSSEMessage(state.clientId, {
+                type: "aborted",
+                message: ABORT_ERROR,
+            });
         }
 
         return state;

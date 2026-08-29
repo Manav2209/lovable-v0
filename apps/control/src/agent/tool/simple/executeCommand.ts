@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
 import { tool } from "langchain";
-import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath, runShellCommand } from "../security";
 
 const executeCommandInput = z.object({
     command: z.string(),
@@ -10,10 +9,8 @@ const executeCommandInput = z.object({
 
 export const executeCommand = tool(async (input: z.infer<typeof executeCommandInput>) => {
     const { command, cwd } = executeCommandInput.parse(input);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const workingDir = cwd ? path.join(projectDir, cwd) : projectDir;
+    const projectDir = getProjectDir();
+    const workingDir = cwd ? resolveSafePath(projectDir, cwd) : projectDir;
 
     try {
         console.log(`[executeCommand] Running: ${command}`);
@@ -24,37 +21,25 @@ export const executeCommand = tool(async (input: z.infer<typeof executeCommandIn
             modifiedCommand = `${command} -y --overwrite`;
         }
 
-        const proc = spawn(modifiedCommand, [], {
+        const result = await runShellCommand(modifiedCommand, {
             cwd: workingDir,
-            shell: true,
-            env: { ...process.env }
+            timeoutMs: 2 * 60_000,
         });
-
-        const stdoutChunks: Buffer[] = [];
-        const stderrChunks: Buffer[] = [];
-
-        proc.stdout?.on("data", (d: Buffer) => stdoutChunks.push(d));
-        proc.stderr?.on("data", (d: Buffer) => stderrChunks.push(d));
-
-        const exitCode: number = await new Promise((resolve) => {
-            proc.on("close", (code) => resolve(code ?? 1));
-        });
-
-        const stdout = Buffer.concat(stdoutChunks).toString();
-        const stderr = Buffer.concat(stderrChunks).toString();
 
         return {
-            exitCode,
-            stdout,
-            stderr,
-            success: exitCode === 0,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            timedOut: result.timedOut,
+            success: result.success,
+            error: result.error,
         };
     } catch (error) {
         return {
             success: false,
             error: `Failed to execute command: ${(error as Error).message}`,
         };
-        }
+    }
     },
     {
         name: "executeCommand",

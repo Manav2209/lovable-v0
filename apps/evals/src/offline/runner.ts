@@ -51,6 +51,17 @@ type CaseResultCore = Omit<
 
 const TIMEOUT_MARKER = Symbol("eval-timeout");
 
+/**
+ * After a timeout we abort the workflow, then wait up to this long for the
+ * in-flight node to settle so no orphaned tool call reads the next case's
+ * SHARED_DIR/PROJECT_ID.
+ */
+const ABORT_GRACE_MS = 5000;
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function runCase(
     evalCase: EvalCase,
     options: RunCaseOptions,
@@ -66,10 +77,12 @@ export async function runCase(
         const workspace = await seedWorkspace(options.runDir, evalCase.id);
         process.env.SHARED_DIR = workspace.sharedDir;
 
-        const { getMemoryEvents, flushEventSink } = await import(
+        const { getMemoryEvents, flushEventSink, resetEventSink } = await import(
             "@control/events/sink"
         );
         const { executeMainFlow } = await import("@control/agent/graphs/main");
+
+        const abortController = new AbortController();
 
         const state: WorkflowState = {
             projectId: workspace.projectId,
@@ -77,6 +90,7 @@ export async function runCase(
             clientId: workspace.projectId,
             fixAttempts: 0,
             maxFixAttempts: options.maxFixAttempts,
+            abortSignal: abortController.signal,
             completed: false,
             messages: [],
             threadId: workspace.projectId,
@@ -102,6 +116,16 @@ export async function runCase(
         ]);
 
         if (raced.kind === TIMEOUT_MARKER) {
+            abortController.abort();
+            // Let the orphaned workflow settle before runCase returns, so a
+            // still-running tool call cannot read the next case's workspace.
+            await Promise.race([
+                workflowPromise.then(
+                    () => undefined,
+                    () => undefined,
+                ),
+                delay(ABORT_GRACE_MS),
+            ]);
             result = {
                 ...core(evalCase, options, workspace.projectId, startedAt),
                 status: "timeout",
@@ -145,6 +169,7 @@ export async function runCase(
         }
 
         await flushEventSink();
+        resetEventSink();
     } catch (err) {
         result = {
             ...core(evalCase, options, "", startedAt),
@@ -155,8 +180,9 @@ export async function runCase(
         };
         metrics = extractMetrics({ completed: false, fixAttempts: 0 } as WorkflowState, Date.now() - startedAt);
         try {
-            const { flushEventSink } = await import("@control/events/sink");
+            const { flushEventSink, resetEventSink } = await import("@control/events/sink");
             await flushEventSink();
+            resetEventSink();
         } catch {
             /* sink unavailable */
         }

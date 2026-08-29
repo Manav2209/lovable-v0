@@ -1,7 +1,7 @@
 import fs from "fs";
 import { tool } from "langchain";
-import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const replaceInFileInput = z.object({
     filePath: z.string().describe("The path to the file to modify"),
@@ -13,10 +13,7 @@ export const replaceInFile = tool(async (input: z.infer<typeof replaceInFileInpu
     console.log("[replaceInFile] Received input:", JSON.stringify(input, null, 2));
     const { filePath, oldString, newString } = replaceInFileInput.parse(input);
     console.log("[replaceInFile] Parsed - filePath:", filePath, "oldString length:", oldString.length, "newString length:", newString.length);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const fullPath = path.resolve(projectDir, filePath);
+    const fullPath = resolveSafePath(getProjectDir(), filePath);
 
     try {
         if (!fs.existsSync(fullPath)) {

@@ -7,6 +7,7 @@ import * as z from "zod";
 import type { WorkflowState } from "../../graphs/workflow";
 import { sendSSEMessage } from "../../../sse";
 import { publishStreamEvent } from "../../../events/sink";
+import { resolveSafePath } from "../security";
 import { ControlToServing } from "types";
 
 const pushCodeInput = z.object({
@@ -42,7 +43,7 @@ export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) =
 
     try {
         const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
+        const projectDir = resolveSafePath(sharedDir, projectId);
 
         if (!fs.existsSync(projectDir)) {
             throw new Error(`Project directory ${projectDir} does not exist`);

@@ -170,7 +170,6 @@ async function main() {
     const { runCase } = await import("./offline/runner");
 
     const evaluated: EvaluatedCase[] = [];
-    const aborted = false;
 
     // Latest computed scores (set by emitReport) so the gate can reuse them.
     const scored: ScoredCase[] = [];
@@ -248,23 +247,21 @@ async function main() {
             }
         }
     } finally {
-        if (!aborted) {
-            await emitReport();
-            await cleanupRunWorkspaces(runDir);
-            console.log(`Results: ${path.join(runDir, "results")}`);
-            console.log(`Report:  ${path.join(runDir, "report.md")}`);
-            console.log(`Score:   ${path.join(runDir, "score.md")}`);
-            try {
-                const { forceLangfuseFlush } = await import(
-                    "@control/observability/instrumentation"
-                );
-                await Promise.race([
-                    forceLangfuseFlush(),
-                    new Promise((r) => setTimeout(r, 5000)),
-                ]);
-            } catch {
-                /* sink unavailable */
-            }
+        await emitReport();
+        await cleanupRunWorkspaces(runDir);
+        console.log(`Results: ${path.join(runDir, "results")}`);
+        console.log(`Report:  ${path.join(runDir, "report.md")}`);
+        console.log(`Score:   ${path.join(runDir, "score.md")}`);
+        try {
+            const { forceLangfuseFlush } = await import(
+                "@control/observability/instrumentation"
+            );
+            await Promise.race([
+                forceLangfuseFlush(),
+                new Promise((r) => setTimeout(r, 5000)),
+            ]);
+        } catch {
+            /* sink unavailable */
         }
     }
 

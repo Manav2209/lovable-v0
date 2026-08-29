@@ -1,11 +1,10 @@
 
 
-import { spawn } from "node:child_process";
 import { tool } from "langchain";
-import path from "path";
 import * as z from "zod";
 import { sendSSEMessage } from "../../../sse";
 import type { WorkflowState } from "../../graphs/workflow";
+import { getProjectDir, resolveSafePath, runProcess } from "../security";
 
 const testBuildInput = z.object({
   action: z.enum(["build", "test"]),
@@ -15,46 +14,35 @@ const testBuildInput = z.object({
 export const testBuild = tool(
   async (input: z.infer<typeof testBuildInput>) => {
     const { action, cwd } = testBuildInput.parse(input);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const workingDir = cwd ? path.join(projectDir, cwd) : projectDir;
+    const projectDir = getProjectDir();
+    const workingDir = cwd ? resolveSafePath(projectDir, cwd) : projectDir;
 
     try {
-      const installProc = spawn("bun", ["install"], { cwd: workingDir });
-      const installExitCode: number = await new Promise((resolve) => {
-        installProc.on("close", resolve);
-        installProc.on("error", () => resolve(1));
+      const install = await runProcess("bun", ["install"], {
+        cwd: workingDir,
+        timeoutMs: 3 * 60_000,
       });
 
-      if (installExitCode !== 0) {
+      if (install.exitCode !== 0) {
         return {
           success: false,
-          error: `Failed to install dependencies before ${action}`,
+          error: `Failed to install dependencies before ${action}: ${install.stderr.slice(0, 500)}`,
         };
       }
 
       const args = action === "build" ? ["run", "build"] : ["run", "test"];
-      const proc = spawn("bun", args, { cwd: workingDir });
-
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-
-      proc.stdout.on("data", (d) => stdoutChunks.push(d));
-      proc.stderr.on("data", (d) => stderrChunks.push(d));
-
-      const exitCode: number = await new Promise((resolve) => {
-        proc.on("close", resolve);
+      const build = await runProcess("bun", args, {
+        cwd: workingDir,
+        timeoutMs: 5 * 60_000,
       });
 
-      const stdout = Buffer.concat(stdoutChunks).toString();
-      const stderr = Buffer.concat(stderrChunks).toString();
-
       return {
-        exitCode,
-        stdout,
-        stderr,
-        success: exitCode === 0,
+        exitCode: build.exitCode,
+        stdout: build.stdout,
+        stderr: build.stderr,
+        timedOut: build.timedOut,
+        success: build.success,
+        error: build.error,
       };
     } catch (error) {
       return {

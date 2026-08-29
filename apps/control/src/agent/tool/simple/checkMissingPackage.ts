@@ -2,6 +2,7 @@ import fs from "fs";
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const checkMissingPackageInput = z.object({
     packages: z.array(z.string()),
@@ -10,10 +11,13 @@ const checkMissingPackageInput = z.object({
 
 export const checkMissingPackage = tool(async (input: z.infer<typeof checkMissingPackageInput>) => {
     const { packages, cwd } = checkMissingPackageInput.parse(input);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const workingDir = cwd ? path.join(projectDir, cwd) : projectDir;
+    const projectDir = getProjectDir();
+    let workingDir: string;
+    try {
+        workingDir = cwd ? resolveSafePath(projectDir, cwd) : projectDir;
+    } catch (error) {
+        return { missing: packages, error: `Invalid working directory: ${(error as Error).message}` };
+    }
     const packageJsonPath = path.join(workingDir, "package.json");
 
     try {

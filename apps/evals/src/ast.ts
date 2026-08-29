@@ -29,7 +29,7 @@ export interface SourceFileInfo {
     components: Set<string>; // defined component names
     exports: Set<string>; // named exports (declaration names)
     /** component name -> the custom components its JSX body renders. */
-    renders: Map<string, Set<string>>;
+    renders: Map<string, string[]>;
     /** hooks called at the top level of a component body (not nested handler). */
     topLevelHooks: Set<string>;
 }
@@ -205,7 +205,7 @@ function analyzeAst(ast: t.File, file: string, info: SourceFileInfo): void {
                 // Top-level hook: directly inside a component's own body, i.e.
                 // the component is the ONLY open function scope (no nested
                 // handler/callback wrapping the call).
-                if (fnStack.length === 1 && fnStack[0].isComponent) {
+                if (fnStack.length === 1 && fnStack[0]?.isComponent) {
                     topLevelHooks.add(callee.name);
                 }
             }
@@ -404,6 +404,9 @@ export function matchAstCheck(
             // rest = [Child]  when one arg; [Parent, Child] when two.
             const parent = rest.length >= 2 ? rest[0] : undefined;
             const rendered = rest.length >= 2 ? rest[1] : rest[0];
+            if (!rendered) {
+                return { passed: false, detail: "invalid render check" };
+            }
             const files: string[] = [];
             for (const f of index.values()) {
                 for (const [hostName, children] of f.renders) {

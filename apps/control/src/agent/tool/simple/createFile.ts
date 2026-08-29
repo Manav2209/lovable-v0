@@ -2,6 +2,7 @@ import fs from "fs";
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const createFileInput = z.object({
     filePath: z.string(),
@@ -10,10 +11,7 @@ const createFileInput = z.object({
 
 export const createFile = tool(async (input: z.infer<typeof createFileInput>) => {
     const { filePath, content } = createFileInput.parse(input);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const fullPath = path.resolve(projectDir, filePath);
+    const fullPath = resolveSafePath(getProjectDir(), filePath);
 
     try {
         fs.mkdirSync(path.dirname(fullPath), { recursive: true });

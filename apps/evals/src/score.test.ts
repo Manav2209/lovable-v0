@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { computeScore, DEFAULT_WEIGHTS, type CaseEvalInput } from "./score";
 import type { EvalCase } from "./dataset";
+import type { EvaluatedCase } from "./report";
+import type { CaseStatus } from "./offline/runner";
 
 function caseBase(overrides: Partial<EvalCase> = {}): EvalCase {
     return {
@@ -15,19 +17,19 @@ function caseBase(overrides: Partial<EvalCase> = {}): EvalCase {
     } as unknown as EvalCase;
 }
 
-function evalInput(overrides: Partial<ReturnType<typeof baseEvaluated>> = {}): CaseEvalInput {
+function evalInput(overrides: Partial<EvaluatedCase> = {}): CaseEvalInput {
     const e = { ...baseEvaluated(), ...overrides };
     return { case: caseBase(), evaluated: e };
 }
 
-function baseEvaluated() {
+function baseEvaluated(): EvaluatedCase {
     return {
         result: {
             runId: "r",
             caseId: "counter-basic",
             tier: "easy",
             projectId: "p",
-            status: "passed_build" as const,
+            status: "passed_build" as CaseStatus,
             completed: true,
             buildStatus: "tested",
             fixAttempts: 0,
