@@ -17,7 +17,7 @@ function extractToken(req: Request): string | null {
 }
 
 export async function projectEvents(req: Request, res: Response) {
-    const { projectId } = req.params;
+    const projectId = String(req.params.projectId ?? "");
     if (!projectId) {
         return res.status(400).json({
             success: false,

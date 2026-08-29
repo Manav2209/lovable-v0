@@ -15,8 +15,9 @@ export function getProjectDir(): string {
 
 /**
  * Resolves `segments` against `baseDir` and guarantees the result stays
- * inside `baseDir`. Rejects `..` escapes, absolute paths, and (for paths that
- * already exist) symlinks pointing outside the sandbox.
+ * inside `baseDir`. Rejects `..` escapes, absolute paths, and (for the
+ * nearest existing ancestor) symlinks pointing outside the sandbox so that
+ * neither reads nor writes to not-yet-existing files can leave the project.
  */
 export function resolveSafePath(baseDir: string, ...segments: string[]): string {
     const base = path.resolve(baseDir);
@@ -28,15 +29,25 @@ export function resolveSafePath(baseDir: string, ...segments: string[]): string 
         throw new Error(`Path escapes project directory: "${segments.join(" >= ")}"`);
     }
 
-    if (fs.existsSync(resolved)) {
-        const real = fs.realpathSync(resolved);
-        const realBase = fs.existsSync(base) ? fs.realpathSync(base) : base;
-        const realRel = path.relative(realBase, real);
-        if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
-            throw new Error(
-                `Path escapes project directory via symlink: "${segments.join(" >= ")}"`,
-            );
-        }
+    if (!fs.existsSync(base)) {
+        return resolved;
+    }
+    const realBase = fs.realpathSync(base);
+
+    // Find the nearest ancestor that exists so symlinked-out parents are
+    // caught even when the final path does not exist yet.
+    let probe = resolved;
+    while (!fs.existsSync(probe)) {
+        const parent = path.dirname(probe);
+        if (parent === probe) return resolved;
+        probe = parent;
+    }
+    const realProbe = fs.realpathSync(probe);
+    const realRel = path.relative(realBase, realProbe);
+    if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
+        throw new Error(
+            `Path escapes project directory via symlink: "${segments.join(" >= ")}"`,
+        );
     }
 
     return resolved;
