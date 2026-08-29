@@ -5,6 +5,7 @@ import type { EvalCase } from "../dataset";
 import { seedWorkspace } from "./workspace";
 import { extractMetrics, runChecks, type CheckResult, type EvalMetrics } from "../checks";
 import { traceCase } from "@control/observability/langfuse";
+import { judgeCase, type JudgeResult } from "../judge";
 
 export type CaseStatus =
     | "passed_build"
@@ -33,6 +34,7 @@ export interface RunCaseResult {
     result: CaseResult;
     metrics: EvalMetrics;
     checks?: CheckResult;
+    judge?: JudgeResult;
 }
 
 export interface RunCaseOptions {
@@ -58,6 +60,7 @@ export async function runCase(
     let result: CaseResult;
     let metrics: EvalMetrics;
     let checks: CheckResult | undefined;
+    let judge: JudgeResult | undefined;
 
     try {
         const workspace = await seedWorkspace(options.runDir, evalCase.id);
@@ -127,6 +130,17 @@ export async function runCase(
 
             if (buildOk) {
                 checks = await runChecks(workspace.projectDir, evalCase.expectedFeatures);
+                if (checks.passed) {
+                    const { model } = await import("@control/agent/client");
+                    judge = await judgeCase(evalCase, workspace.projectDir, model);
+                    if (judge.valid) {
+                        console.log(
+                            `      q ${((judge.fulfilled + judge.coherence + judge.codeQuality + judge.reusability) / 4 * 100).toFixed(0)}/100 — ${judge.notes.slice(0, 60)}`,
+                        );
+                    } else {
+                        console.log(`      ! judge failed: ${judge.notes.slice(0, 80)}`);
+                    }
+                }
             }
         }
 
@@ -149,7 +163,7 @@ export async function runCase(
     }
 
     await writeResultAtomically(options.runDir, result);
-    return { result, metrics, checks };
+    return { result, metrics, checks, judge };
 }
 
 function core(

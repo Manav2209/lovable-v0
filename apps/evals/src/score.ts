@@ -12,6 +12,8 @@ export interface ScoreWeights {
     fixEfficiency: number;
     /** Faster relative to budget = better (0-1). */
     duration: number;
+    /** LLM-as-judge rubric quality (0-1). */
+    quality: number;
     /** Tier difficulty bonus applied post-sum. */
     tierBonus: Record<EvalTier, number>;
 }
@@ -43,10 +45,11 @@ export interface CaseEvalInput {
 }
 
 export const DEFAULT_WEIGHTS: ScoreWeights = {
-    build: 0.4,
-    features: 0.3,
-    fixEfficiency: 0.15,
-    duration: 0.15,
+    build: 0.35,
+    features: 0.25,
+    fixEfficiency: 0.1,
+    duration: 0.1,
+    quality: 0.2,
     tierBonus: { easy: 1.0, medium: 1.1, hard: 1.25 },
 };
 
@@ -97,6 +100,30 @@ export function computeScore(
         weight: weights.features,
         points: 0,
         note: checks ? `${checks.score}/${checks.total}` : "no checks run",
+    });
+
+    // LLM-as-judge quality (0-100). Only meaningful when a valid judge ran;
+    // otherwise neutral (50) so it neither helps nor unfairly penalizes.
+    const judge = evaluated.judge;
+    const qualityRaw = judge
+        ? Math.round(
+              ((judge.fulfilled + judge.coherence + judge.codeQuality + judge.reusability) /
+                  4) *
+                  100,
+          )
+        : 50;
+    const qualityNote = judge
+        ? judge.valid
+            ? `${qualityRaw}/100`
+            : `judge failed: ${judge.notes}`
+        : "no judge ran";
+    dims.push({
+        label: "Quality",
+        raw: judge?.valid ? qualityRaw : 50,
+        max: 100,
+        weight: weights.quality,
+        points: 0,
+        note: qualityNote,
     });
 
     // Fix efficiency (0-100): normalize fix attempts against budget.
@@ -183,7 +210,8 @@ export function renderScoreTable(scores: ScoredCase[]): string[] {
     for (const s of scores) {
         lines.push(
             `  ${s.caseId.padEnd(22)} ${String(s.overall).padStart(3)} (base ${String(s.score).padStart(3)})` +
-                `  b:${s.breakdown[0]?.raw ?? 0} f:${s.breakdown[1]?.raw ?? 0}`,
+                `  b:${s.breakdown[0]?.raw ?? 0} f:${s.breakdown[1]?.raw ?? 0}` +
+                ` q:${s.breakdown[2]?.raw ?? 0}`,
         );
     }
     if (scores.length > 0) {
