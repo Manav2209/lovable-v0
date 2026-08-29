@@ -4,6 +4,7 @@ import path from "path";
 import * as z from "zod";
 import { glob } from "glob";
 import { IGNORE_PATTERNS } from "./getContext";
+import { getProjectDir, resolveSafePath } from "../security";
 
 
 
@@ -14,10 +15,11 @@ const listDirInput = z.object({
 
 export const listDir = tool(async (input: z.infer<typeof listDirInput>) => {
     const { directory, globPattern } = listDirInput.parse(input);
-    const projectId = process.env.PROJECT_ID || "";
-    const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    const projectDir = path.join(sharedDir, projectId);
-    const fullPath = path.resolve(projectDir, directory);
+    const fullPath = resolveSafePath(getProjectDir(), directory);
+
+    if (globPattern?.includes("..")) {
+        return { error: `Invalid glob pattern: "${globPattern}"`, items: [] };
+    }
 
     try {
         let items;

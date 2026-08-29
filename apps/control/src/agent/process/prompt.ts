@@ -40,6 +40,7 @@ export async function processPrompt(
         prompt: prompt + (contextInfo ? `\n\n${contextInfo}` : ""),
         clientId: clientIdUsed,
         fixAttempts: 0,
+        maxFixAttempts: Number(process.env.MAX_FIX_ATTEMPTS || 5),
         completed: false,
         messages: [],
         threadId: projectId,

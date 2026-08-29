@@ -2,6 +2,7 @@ import fs from "fs";
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const renameFileInput = z.object({
     oldPath: z.string().describe("The current path of the file to rename"),
@@ -11,11 +12,8 @@ const renameFileInput = z.object({
 export const renameFile = tool(
     async (input: z.infer<typeof renameFileInput>) => {
         const { oldPath, newPath } = renameFileInput.parse(input);
-        const projectId = process.env.PROJECT_ID || "";
-        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
-        const fullOldPath = path.resolve(projectDir, oldPath);
-        const fullNewPath = path.resolve(projectDir, newPath);
+        const fullOldPath = resolveSafePath(getProjectDir(), oldPath);
+        const fullNewPath = resolveSafePath(getProjectDir(), newPath);
 
         try {
             if (!fs.existsSync(fullOldPath)) {

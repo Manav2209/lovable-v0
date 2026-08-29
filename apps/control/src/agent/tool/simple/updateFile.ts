@@ -1,7 +1,7 @@
 import fs from "fs";
 import { tool } from "langchain";
-import path from "path";
 import * as z from "zod";
+import { getProjectDir, resolveSafePath } from "../security";
 
 const updateFileInput = z.object({
     filePath: z.string(),
@@ -11,10 +11,7 @@ const updateFileInput = z.object({
 export const updateFile = tool(
     async (input: z.infer<typeof updateFileInput>) => {
         const { filePath, content } = updateFileInput.parse(input);
-        const projectId = process.env.PROJECT_ID || "";
-        const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
-        const fullPath = path.resolve(projectDir, filePath);
+        const fullPath = resolveSafePath(getProjectDir(), filePath);
 
     try {
         if (!fs.existsSync(fullPath)) {
