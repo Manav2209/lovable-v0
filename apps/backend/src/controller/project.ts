@@ -107,7 +107,7 @@ export const getProject = async (req: Request, res: Response) => {
 };
 
 export const getProjectById = async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+    const projectId = String(req.params.projectId ?? "");
 
     const projectResult = await db
         .select()
@@ -115,7 +115,9 @@ export const getProjectById = async (req: Request, res: Response) => {
         .where(and(eq(projects.id, projectId), eq(projects.userId, req.userId!)))
         .limit(1);
 
-    if (projectResult.length === 0) {
+    const project = projectResult[0];
+
+    if (!project) {
         return res.status(404).json({
             success: false,
             data: null,
@@ -126,13 +128,13 @@ export const getProjectById = async (req: Request, res: Response) => {
     const history = await db
         .select()
         .from(conversationHistory)
-        .where(eq(conversationHistory!.projectId, projectId!))
+        .where(eq(conversationHistory!.projectId, projectId))
         .orderBy(asc(conversationHistory.createdAt));
 
     return res.status(200).json({
         success: true,
         data: {
-            ...projectResult[0],
+            ...project,
             conversationHistory: history,
         },
         error: null,
@@ -140,7 +142,7 @@ export const getProjectById = async (req: Request, res: Response) => {
 };
 
 export const createConversation = async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+    const projectId = String(req.params.projectId ?? "");
     const { prompt } = req.body;
 
     if (!prompt) {
@@ -176,7 +178,7 @@ export const createConversation = async (req: Request, res: Response) => {
     });
 
     try {
-        const response = await responseManager.wait(projectId!, 600_000);
+        const response = await responseManager.wait(projectId, 600_000);
         const parsed = JSON.parse(response);
 
         if (parsed.type === PROMPT_RESPONSE) {

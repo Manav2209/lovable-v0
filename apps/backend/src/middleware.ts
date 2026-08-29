@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
+import type { NextFunction, Request, Response } from "express";
 
-export function authMiddleware(req: any, res: any, next: any) {
+export function authMiddleware(req: Request, res: Response, next: NextFunction) {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -11,11 +12,14 @@ export function authMiddleware(req: any, res: any, next: any) {
         });
     }
 
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.split(" ")[1]!;
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-        req.userId = decoded.id;
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET!,
+        ) as jwt.JwtPayload & { id?: string };
+        req.userId = decoded?.id;
         next();
     } catch {
         return res.status(401).json({

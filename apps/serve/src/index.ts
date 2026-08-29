@@ -15,9 +15,8 @@ import {
     toPreviewSlug,
     agentSseChannel,
 } from "types";
-import path from "path";
 import fs from "fs";
-import { checkIfProjectFilesExist, serveTheProject } from "./lib/helper";
+import { checkIfProjectFilesExist, serveTheProject, projectDir as projectDirFor } from "./lib/helper";
 import {
     RedisManager,
     publishEnvelope,
@@ -167,9 +166,7 @@ async function ListenControl() {
                 case PROJECT_INITIALIZED:
                     try {
                         console.log(`[${projectId}] Initialization started`);
-                        const sharedDir =
-                            process.env.SHARED_DIR || "/app/shared";
-                        const projectDir = path.join(sharedDir, projectId);
+                        const projectDir = projectDirFor(projectId);
 
                         if (!fs.existsSync(projectDir)) {
                             throw new Error("project workspace not found");

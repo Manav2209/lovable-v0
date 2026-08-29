@@ -248,7 +248,11 @@ async function main() {
         }
     } finally {
         await emitReport();
-        await cleanupRunWorkspaces(runDir);
+        if (process.env.EVAL_KEEP_WORKSPACES !== "true") {
+            await cleanupRunWorkspaces(runDir);
+        } else {
+            console.log(`Workspaces preserved: ${path.join(runDir, "ws-*")}`);
+        }
         console.log(`Results: ${path.join(runDir, "results")}`);
         console.log(`Report:  ${path.join(runDir, "report.md")}`);
         console.log(`Score:   ${path.join(runDir, "score.md")}`);

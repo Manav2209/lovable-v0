@@ -11,11 +11,13 @@ import {
     PROJECT_BUILD_FAILED,
     PROJECT_BUILD_SUCCESS,
     ControlToOrchestrator,
+    assertSafeProjectId,
 } from "types";
 import { listObjects, getObject } from "r2";
 import fs from "fs";
 import path from "path";
 import { buildProjectAndNotifyToRun } from "./agent/tool/code/buildSource";
+import { resolveSafePath } from "./agent/tool/security";
 import { processPrompt } from "./agent";
 import { startSSEServer } from "./sse";
 import {
@@ -60,6 +62,7 @@ function waitForServingConfirmation(projectId: string, timeoutMs = 60_000) {
 
 async function pullTemplatefromR2(projectId: string) {
     try {
+        assertSafeProjectId(projectId);
         const { Contents } = await listObjects({
             Bucket: bucketName,
             Prefix: "template/",
@@ -70,7 +73,7 @@ async function pullTemplatefromR2(projectId: string) {
         }
 
         const sharedDir = process.env.SHARED_DIR || "/app/shared";
-        const projectDir = path.join(sharedDir, projectId);
+        const projectDir = resolveSafePath(sharedDir, projectId);
 
         if (!fs.existsSync(sharedDir)) {
             fs.mkdirSync(sharedDir, { recursive: true });
@@ -86,7 +89,7 @@ async function pullTemplatefromR2(projectId: string) {
                     Bucket: bucketName,
                     Key: obj.Key,
                 });
-                const filePath = path.join(projectDir, relativePath);
+                const filePath = resolveSafePath(projectDir, relativePath);
                 const fileDir = path.dirname(filePath);
                 if (!fs.existsSync(fileDir)) {
                     fs.mkdirSync(fileDir, { recursive: true });

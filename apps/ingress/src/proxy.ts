@@ -54,7 +54,6 @@ export async function proxyRequest(
                 req.method === "GET" || req.method === "HEAD"
                     ? undefined
                     : req,
-            // @ts-expect-error bun/node duplex for streamed body
             duplex: "half",
             redirect: "manual",
         } as RequestInit);
