@@ -45,5 +45,26 @@ export function agentSseChannel(projectId: string): string {
     return `${AgentSseChannelPrefix}${projectId}`;
 }
 
+/**
+ * Validates a project id supplied by any actor other than the backend
+ * (stream messages, ingress routes, R2 keys). Rejects path separators,
+ * `..` escapes, and control characters so the id can never walk out of
+ * `SHARED_DIR/<projectId>` when joined onto a filesystem path.
+ */
+export function assertSafeProjectId(projectId: string): string {
+    if (
+        typeof projectId !== "string" ||
+        projectId.length === 0 ||
+        projectId.length > 128 ||
+        !/^[A-Za-z0-9._-]+$/.test(projectId) ||
+        projectId.includes("..") ||
+        projectId.startsWith(".") ||
+        projectId.endsWith(".")
+    ) {
+        throw new Error(`Invalid project id: ${String(projectId ?? "").slice(0, 64)}`);
+    }
+    return projectId;
+}
+
 export * from "./preview";
 

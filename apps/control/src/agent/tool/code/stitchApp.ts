@@ -1,11 +1,13 @@
 import fs from "fs";
 import path from "path";
+import { assertSafeProjectId } from "types";
 import { sendSSEMessage } from "../../../sse";
+import { resolveSafePath } from "../security";
 import type { WorkflowState } from "../../graphs/workflow";
 
 function projectDir(projectId: string): string {
     const sharedDir = process.env.SHARED_DIR || "/app/shared";
-    return path.join(sharedDir, projectId);
+    return resolveSafePath(sharedDir, assertSafeProjectId(projectId));
 }
 
 function listPageComponents(srcDir: string): string[] {

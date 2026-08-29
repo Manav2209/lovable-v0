@@ -3,18 +3,78 @@ import fs from "fs";
 import path from "path";
 import net from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
-import { PROJECT_FAILED, PROJECT_RUN_FAILED, ServingToOrchestrator } from "types";
+import {
+    PROJECT_FAILED,
+    PROJECT_RUN_FAILED,
+    ServingToOrchestrator,
+    assertSafeProjectId,
+} from "types";
 import { publishEnvelope } from "shared-redis";
 
 const runningProcesses = new Map<string, ChildProcess>();
 
+const SECRET_ENV_PATTERN =
+    /(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|JWT|DATABASE_URL|S3_API|PRIVATE|PRESIGN)/i;
+
+/**
+ * Environment for spawned project processes. Strips cloud credentials and
+ * database secrets so a prompt-injected or malicious generated app cannot
+ * read or exfiltrate them.
+ */
+function sanitizeServingEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const key of Object.keys(env)) {
+        if (SECRET_ENV_PATTERN.test(key)) {
+            delete env[key];
+        }
+    }
+    return env;
+}
+
+/** Resolves a path and guarantees it stays under `baseDir` (lexical). */
+function resolveWithin(baseDir: string, ...segments: string[]): string {
+    const base = path.resolve(baseDir);
+    const resolved = path.resolve(base, ...segments);
+    const rel = path.relative(base, resolved);
+    if (rel === "") return base;
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        throw new Error(
+            `Path escapes project directory: ${segments.join(" / ")}`,
+        );
+    }
+    return resolved;
+}
+
+export function projectDir(projectId: string): string {
+    const sharedDir = process.env.SHARED_DIR || "/app/shared";
+    return resolveWithin(sharedDir, assertSafeProjectId(projectId));
+}
+
+/** Resolves a child process' exit code, SIGKILLing it if it exceeds the timeout. */
+function spawnExitCode(proc: ChildProcess, timeoutMs: number): Promise<number> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            try {
+                proc.kill("SIGKILL");
+            } catch {
+                /* already gone */
+            }
+            resolve(-1);
+        }, timeoutMs);
+        proc.on("close", (code) => {
+            clearTimeout(timer);
+            resolve(code ?? -1);
+        });
+        proc.on("error", () => {
+            clearTimeout(timer);
+            resolve(-1);
+        });
+    });
+}
+
 export const fetchFilesFromSharedDir = async (projectId: string) => {
-  console.log(`${process.env.SHARED_DIR}`);
   const bucketName = process.env.BUCKET_NAME || "lovable";
-  const dir = path.join(
-    `${process.env.SHARED_DIR}` || "/app/shared",
-    projectId,
-  );
+  const dir = projectDir(projectId);
   fs.mkdirSync(dir, { recursive: true });
 
   try {
@@ -40,7 +100,7 @@ export const fetchFilesFromSharedDir = async (projectId: string) => {
         });
 
         const relativePath = obj.Key.replace(`${projectId}/`, "");
-        const filePath = path.join(dir, relativePath);
+        const filePath = resolveWithin(dir, relativePath);
 
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
@@ -67,10 +127,7 @@ export const fetchFilesFromSharedDir = async (projectId: string) => {
 };
 
 export const checkIfProjectFilesExist = (projectId: string): boolean => {
-  const dir = path.join(
-    `${process.env.SHARED_DIR}` || "/app/shared",
-    projectId,
-  );
+  const dir = projectDir(projectId);
 
   return fs.existsSync(dir) && fs.readdirSync(dir).length > 0;
 };
@@ -87,8 +144,7 @@ function resolveServeScript(
 }
 
 export const serveTheProject = async (projectId: string) => {
-  const sharedDir = process.env.SHARED_DIR || "/app/shared";
-  const dir = path.join(sharedDir, projectId);
+  const dir = projectDir(projectId);
 
   if (!fs.existsSync(dir)) {
     await publishEnvelope(ServingToOrchestrator, {
@@ -123,10 +179,26 @@ export const serveTheProject = async (projectId: string) => {
   const port = 3000;
 
   try {
-    const killCommand = `lsof -ti:${port} | xargs kill -9 2>/dev/null || true`;
-    const killProc = spawn(killCommand, [], { shell: true });
-    await new Promise((resolve) => killProc.on("close", resolve));
-    console.log(`Killed existing process on port ${port}`);
+    const lsofProc = spawn("lsof", ["-ti", String(port)]);
+    const pidOutput: string = await new Promise((resolve) => {
+      let out = "";
+      lsofProc.stdout?.on("data", (d) => (out += d.toString()));
+      lsofProc.on("close", () => resolve(out));
+    });
+    const pids = pidOutput
+      .split("\n")
+      .map((p) => p.trim())
+      .filter((p) => /^\d+$/.test(p));
+    for (const pid of pids) {
+      try {
+        process.kill(Number(pid), "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+    if (pids.length > 0) {
+      console.log(`Killed existing process on port ${port}`);
+    }
   } catch (error) {
     console.error(`Failed to free port ${port}:`, error);
   }
@@ -145,7 +217,11 @@ export const serveTheProject = async (projectId: string) => {
     );
   } else {
     console.log(`Installing dependencies for project ${projectId}`);
-    const installProc = spawn("bun", ["install"], { cwd: dir, stdio: "pipe" });
+    const installProc = spawn("bun", ["install"], {
+      cwd: dir,
+      stdio: "pipe",
+      env: sanitizeServingEnv(),
+    });
 
     installProc.stdout?.on("data", (data) =>
       console.log(`[${projectId}] install:`, data.toString()),
@@ -154,9 +230,7 @@ export const serveTheProject = async (projectId: string) => {
       console.error(`[${projectId}] install error:`, data.toString()),
     );
 
-    const installCode: number = await new Promise((resolve) =>
-      installProc.on("close", resolve),
-    );
+    const installCode = await spawnExitCode(installProc, 5 * 60_000);
 
     if (installCode !== 0) {
       console.error(`Failed to install dependencies for ${projectId}`);
@@ -164,7 +238,10 @@ export const serveTheProject = async (projectId: string) => {
       await publishEnvelope(ServingToOrchestrator, {
         projectId,
         type: PROJECT_RUN_FAILED,
-        payload: `Failed to install dependencies (exit code: ${installCode})`,
+        payload:
+          installCode === -1
+            ? "Dependency installation timed out"
+            : `Failed to install dependencies (exit code: ${installCode})`,
       });
       return false;
     }
@@ -197,7 +274,7 @@ export const serveTheProject = async (projectId: string) => {
           stdio: ["ignore", "pipe", "pipe"],
           detached: false,
           env: {
-            ...process.env,
+            ...sanitizeServingEnv(),
             PORT: port.toString(),
             HOST: "0.0.0.0",
           },
@@ -208,7 +285,7 @@ export const serveTheProject = async (projectId: string) => {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
         env: {
-          ...process.env,
+          ...sanitizeServingEnv(),
           PORT: port.toString(),
           HOST: "0.0.0.0",
         },

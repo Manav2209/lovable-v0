@@ -5,6 +5,8 @@ import { IGNORE_PATTERNS } from "../simple/getContext"
 import { sendSSEMessage } from "../../../sse";
 import { model } from "../../client";
 import { allTools, type WorkflowState } from "../../graphs/main";
+import { assertSafeProjectId } from "types";
+import { resolveSafePath } from "../security";
 
 const errorFixerInput = z.object({
   projectId: z.string(),
@@ -562,8 +564,10 @@ export async function fixErrorsNode(state: WorkflowState): Promise<Partial<Workf
   console.log("[fixErrorsNode] buildOutput:", state.buildOutput?.substring(0, 500));
 
   const projectId = state.projectId;
-  const sharedDir = process.env.SHARED_DIR || "/app/shared";
-  const projectDir = require("path").join(sharedDir, projectId);
+  const projectDir = resolveSafePath(
+    process.env.SHARED_DIR || "/app/shared",
+    assertSafeProjectId(projectId),
+  );
   const existingFiles = getAllProjectFiles(projectDir);
 
   console.log("[fixErrorsNode] Found existing files:", existingFiles.slice(0, 20));
