@@ -22,6 +22,10 @@ interface BuildError {
   fixable: boolean;
 }
 
+function nodeModulesReady(projectDir: string): boolean {
+  return fs.existsSync(path.join(projectDir, "node_modules", "vite"));
+}
+
 function parseAndCategorizeBuildErrors(stderr: string, stdout: string): BuildError[] {
   const errors: BuildError[] = [];
   const combinedOutput = stderr + "\n" + stdout;
@@ -156,7 +160,7 @@ export const validateBuild = tool(
         };
       }
 
-      const essentialFiles = ["package.json", "src/App.jsx", "src/index.jsx"];
+      const essentialFiles = ["package.json", "src/App.jsx", "src/main.jsx"];
       const missingFiles = essentialFiles.filter(file => !fs.existsSync(path.join(projectDir, file)));
 
       if (missingFiles.length > 0) {
@@ -193,10 +197,12 @@ export const validateBuild = tool(
         };
       }
 
-      const install = await runProcess("bun", ["install"], {
-        cwd: projectDir,
-        timeoutMs: 3 * 60_000,
-      });
+      const install = nodeModulesReady(projectDir)
+        ? { success: true, stderr: "", error: undefined }
+        : await runProcess("bun", ["install"], {
+            cwd: projectDir,
+            timeoutMs: 8 * 60_000,
+          });
 
       if (!install.success) {
         throw new Error(
@@ -301,7 +307,10 @@ export async function validateNode(state: WorkflowState): Promise<Partial<Workfl
 
   const errorCount = result.errors?.length || 0;
 
-  if (result.success || errorCount === 0) {
+  // Only treat the node as success when the actual `bun run build` succeeded.
+  // A failed build with an unparsed stderr used to look like "0 errors" and
+  // skip the fix loop, then die later in testBuild with a generic error.
+  if (result.success === true) {
     sendSSEMessage(state.clientId, {
       type: "validation_success",
       message: "Build validation passed - no errors found",
@@ -320,9 +329,21 @@ export async function validateNode(state: WorkflowState): Promise<Partial<Workfl
     errorAnalysis: result.errorAnalysis,
   });
 
+  const errors =
+    result.errors && result.errors.length > 0
+      ? result.errors
+      : [
+          {
+            type: "unknown",
+            severity: "major",
+            message: result.error || result.message || "Build failed",
+            fixable: true,
+          },
+        ];
+
   return {
     buildStatus: "errors",
-    buildErrors: result.errors || [],
+    buildErrors: errors,
     buildOutput: result.error || result.buildOutput || "",
     errorAnalysis: result.errorAnalysis,
   };

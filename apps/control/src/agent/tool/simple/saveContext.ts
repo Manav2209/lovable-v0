@@ -45,7 +45,7 @@ export async function saveNode(state: WorkflowState): Promise<Partial<WorkflowSt
     });
 
     sendSSEMessage(state.clientId, {
-        type: "completed",
+        type: "context_saved",
         message: "Context saved successfully",
     });
 

@@ -1,0 +1,10 @@
+# Generated agent workspaces — never send to Docker Hub via build context
+shared/
+**/shared/
+
+node_modules
+**/.env
+**/.env.*
+.git
+.tmp-e2e-flow.mjs
+.tmp-sse-monitor.mjs

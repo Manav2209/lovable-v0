@@ -5,7 +5,7 @@ import { model } from "../../client";
 import { sendSSEMessage } from "../../../sse";
 import type { WorkflowState } from "../../graphs/workflow";
 
-const userGivenPromptSchema = z.string().min(1).max(256);
+const userGivenPromptSchema = z.string().min(1).max(16_000);
 
 export const checkUserGivenPrompt = tool(
   async (

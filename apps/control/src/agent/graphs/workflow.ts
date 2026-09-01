@@ -70,6 +70,14 @@ async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>
         return { fixesApplied: false, toolsExecuted: true };
     }
 
+    if (state.toolsExecuted) {
+        sendSSEMessage(state.clientId, {
+            type: "skipping_execution",
+            message: "Tools already executed; re-validating without rewriting files...",
+        });
+        return {};
+    }
+
     sendSSEMessage(state.clientId, {
         type: "executing",
         message: "Executing tools...",
@@ -160,6 +168,7 @@ async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
     let state = { ...initialState };
+    process.env.PROJECT_ID = state.projectId;
 
     try {
         sendSSEMessage(state.clientId, {
@@ -219,7 +228,7 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
 
             if (isAborted(state)) break;
 
-            // Always compose generated components into App.tsx before validate/build.
+            // Always compose generated components into App.jsx before validate/build.
             const stitchResult = await stitchAppNode(state);
             state = { ...state, ...stitchResult };
 
@@ -300,7 +309,12 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             }
         }
 
-        if (state.toolResults && state.toolResults.length > 0 && !isAborted(state)) {
+        if (
+            !state.changeSummary &&
+            state.toolResults &&
+            state.toolResults.length > 0 &&
+            !isAborted(state)
+        ) {
             const summaryResult = await summarizeChangesNode(state);
             state = { ...state, ...summaryResult };
         }
