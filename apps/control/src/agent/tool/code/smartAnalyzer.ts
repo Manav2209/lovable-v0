@@ -39,7 +39,7 @@ Utility functions: cn() in @/lib/utils - ALREADY AVAILABLE
 EXISTING FILE STRUCTURE:
 - package.json (with all dependencies)
 - src/App.jsx (main app component)
-- src/index.jsx or src/index.js (entry point)
+- src/main.jsx (entry point)
 - src/index.css (Tailwind CSS configured)
 - src/components/ (for custom components)
 - src/components/ui/ (shadcn/ui components)
@@ -49,12 +49,12 @@ EXISTING FILE STRUCTURE:
 
 YOUR WORKFLOW - FOLLOW THIS STRICTLY:
 1. FIRST: Read existing files to understand current structure
-   - ALWAYS start with: listDir, readFile for package.json, readFile for App.tsx
+   - ALWAYS start with: listDir, readFile for package.json, readFile for App.jsx
 2. ANALYZE: Understand what's already there and what needs to change
 3. PLAN BEAUTIFUL UI: Include gradients, shadows, animations, hover effects, and modern design in all components
 4. PLAN: Create modifications based on existing structure
 5. MODIFY: Use updateFile for existing files, createFile ONLY for new files
-6. FINAL: ALWAYS update src/App.tsx to import and render every new page/section component. Never leave the Hello World template visible.
+6. FINAL: ALWAYS update src/App.jsx to import and render every new page/section component. Never leave the Hello World template visible.
 7. DO NOT: Create new project, reinstall existing packages, or ignore existing structure
 8. Use real lucide-react icon names only; do not invent icons. Do not add unused React imports.
 

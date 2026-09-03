@@ -218,6 +218,20 @@ export async function createProjectPod(projectId: string) {
         { name: "ACCESS_KEY_ID", value: process.env.ACCESS_KEY_ID || "" },
         { name: "SECRET_ACCESS_KEY", value: process.env.SECRET_ACCESS_KEY || "" },
         { name: "GROQ_API_KEY", value: process.env.GROQ_API_KEY || "" },
+        { name: "GROQ_MODEL", value: process.env.GROQ_MODEL || "" },
+        { name: "LLM_PROVIDER", value: process.env.LLM_PROVIDER || "" },
+        {
+            name: "AIROUTER_API_KEY",
+            value: process.env.AIROUTER_API_KEY || "",
+        },
+        {
+            name: "AIROUTER_BASE_URL",
+            value: process.env.AIROUTER_BASE_URL || "",
+        },
+        {
+            name: "AIROUTER_MODEL",
+            value: process.env.AIROUTER_MODEL || "",
+        },
         { name: "PREVIEW_DOMAIN", value: PREVIEW_DOMAIN },
         {
             name: "PREVIEW_PUBLIC_PORT",
@@ -265,8 +279,8 @@ export async function createProjectPod(projectId: string) {
                         {
                             name: "control",
                             imagePullPolicy: "Never",
-                            image: "manav2854/control-pod:v0",
-                            command: ["bun", "run", "src/index.ts"],
+                            image: "manav2854/control-pod:v2",
+                            command: ["bun", "--dns-result-order=ipv4first", "run", "src/index.ts"],
                             env: envVars,
                             ports: [
                                 {
@@ -289,8 +303,8 @@ export async function createProjectPod(projectId: string) {
                         {
                             name: "serving",
                             imagePullPolicy: "Never",
-                            image: "manav2854/serving-pod:v0",
-                            command: ["bun", "run", "src/index.ts"],
+                            image: "manav2854/serving-pod:v1",
+                            command: ["bun", "--dns-result-order=ipv4first", "run", "src/index.ts"],
                             env: envVars,
                             ports: [
                                 {

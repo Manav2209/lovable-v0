@@ -1,5 +1,5 @@
 # ─── Stage 1: Base ────────────────────────────────────────────────────────────
-FROM oven/bun:1.2.8-alpine AS base
+FROM oven/bun:1.4.0-alpine AS base
 WORKDIR /app
 
 # ─── Stage 2: Install dependencies ────────────────────────────────────────────
@@ -30,7 +30,7 @@ COPY packages/r2/           ./packages/r2/
 COPY apps/control/          ./apps/control/
 
 # ─── Stage 4: Production image ────────────────────────────────────────────────
-FROM oven/bun:1.2.8-alpine AS runner
+FROM oven/bun:1.4.0-alpine AS runner
 WORKDIR /app
 
 # Copy everything needed to run (node_modules + source)
