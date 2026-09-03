@@ -1,13 +1,16 @@
 import fs from "fs";
 import path from "path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { getAgentRuntime } from "../runtime";
 
 /**
- * Resolve the sandbox root. Tools must only ever touch files inside
- * `<SHARED_DIR>/<PROJECT_ID>` so a prompt-injected tool call cannot read or
- * write outside the pod's workspace.
+ * Resolve the sandbox root. Prefer AgentRuntime (request-scoped) over
+ * process.env.PROJECT_ID so concurrent evals cannot leak workspaces.
  */
 export function getProjectDir(): string {
+    const runtime = getAgentRuntime();
+    if (runtime) return runtime.projectDir;
+
     const sharedDir = process.env.SHARED_DIR || "/app/shared";
     const projectId = process.env.PROJECT_ID || "";
     return path.join(sharedDir, projectId);

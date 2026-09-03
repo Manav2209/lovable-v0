@@ -12,6 +12,8 @@ import {
 import { publishEnvelope } from "shared-redis";
 
 const runningProcesses = new Map<string, ChildProcess>();
+/** Project ids whose current child is being replaced; their close must not emit RUN_FAILED. */
+const restartingProjects = new Set<string>();
 
 const SECRET_ENV_PATTERN =
     /(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|JWT|DATABASE_URL|S3_API|PRIVATE|PRESIGN)/i;
@@ -179,25 +181,19 @@ export const serveTheProject = async (projectId: string) => {
   const port = 3000;
 
   try {
-    const lsofProc = spawn("lsof", ["-ti", String(port)]);
-    const pidOutput: string = await new Promise((resolve) => {
-      let out = "";
-      lsofProc.stdout?.on("data", (d) => (out += d.toString()));
-      lsofProc.on("close", () => resolve(out));
-    });
-    const pids = pidOutput
-      .split("\n")
-      .map((p) => p.trim())
-      .filter((p) => /^\d+$/.test(p));
+    const pids = await pidsListeningOnPort(port);
+    if (pids.length > 0) {
+      restartingProjects.add(projectId);
+    }
     for (const pid of pids) {
       try {
-        process.kill(Number(pid), "SIGKILL");
+        process.kill(pid, "SIGKILL");
       } catch {
         /* already gone */
       }
     }
     if (pids.length > 0) {
-      console.log(`Killed existing process on port ${port}`);
+      console.log(`Killed existing process on port ${port}: ${pids.join(",")}`);
     }
   } catch (error) {
     console.error(`Failed to free port ${port}:`, error);
@@ -206,6 +202,7 @@ export const serveTheProject = async (projectId: string) => {
   const existingProc = runningProcesses.get(projectId);
   if (existingProc) {
     console.log(`Killing existing process for project ${projectId}`);
+    restartingProjects.add(projectId);
     existingProc.kill();
     runningProcesses.delete(projectId);
   }
@@ -254,6 +251,7 @@ export const serveTheProject = async (projectId: string) => {
   const hasViteConfig =
     fs.existsSync(path.join(dir, "vite.config.ts")) ||
     fs.existsSync(path.join(dir, "vite.config.js")) ||
+    fs.existsSync(path.join(dir, "vite.config.mjs")) ||
     fs.existsSync(path.join(dir, "vite.config.mts"));
 
   // Force Vite onto the K8s service port (default is 5173).
@@ -314,7 +312,12 @@ export const serveTheProject = async (projectId: string) => {
       console.log(`Server process for ${projectId} exited with code ${code}`);
       runningProcesses.delete(projectId);
 
-      if (code !== 0 && code !== 143) {
+      if (restartingProjects.has(projectId)) {
+        restartingProjects.delete(projectId);
+        return;
+      }
+
+      if (code !== 0 && code !== 143 && code != null) {
         await publishEnvelope(ServingToOrchestrator, {
           projectId,
           type: PROJECT_RUN_FAILED,
@@ -339,6 +342,40 @@ export const serveTheProject = async (projectId: string) => {
 
   return false;
 };
+
+async function pidsListeningOnPort(port: number): Promise<number[]> {
+  if (process.platform === "win32") {
+    const proc = spawn("netstat", ["-ano"]);
+    const out: string = await new Promise((resolve) => {
+      let buf = "";
+      proc.stdout?.on("data", (d) => (buf += d.toString()));
+      proc.on("close", () => resolve(buf));
+      proc.on("error", () => resolve(""));
+    });
+    const pids = new Set<number>();
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.includes(`:${port} `) && !line.includes(`:${port}\t`)) continue;
+      if (!/\sLISTEN(ING)?\s/i.test(line)) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = Number(parts[parts.length - 1]);
+      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    }
+    return [...pids];
+  }
+
+  const lsofProc = spawn("lsof", ["-ti", String(port)]);
+  const pidOutput: string = await new Promise((resolve) => {
+    let buf = "";
+    lsofProc.stdout?.on("data", (d) => (buf += d.toString()));
+    lsofProc.on("close", () => resolve(buf));
+    lsofProc.on("error", () => resolve(""));
+  });
+  return pidOutput
+    .split("\n")
+    .map((p) => p.trim())
+    .filter((p) => /^\d+$/.test(p))
+    .map((p) => Number(p));
+}
 
 async function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
   const started = Date.now();

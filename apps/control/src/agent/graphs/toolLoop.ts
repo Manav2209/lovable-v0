@@ -1,0 +1,150 @@
+import { HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { model } from "../client";
+import { SYSTEM_PROMPTS } from "../../prompt/systemPrompt";
+import { sendSSEMessage } from "../../sse";
+import { requireAgentRuntime } from "../runtime";
+import { codingAgentTools } from "../tool/codingTools";
+import type { WorkflowState } from "./workflow";
+
+const MAX_AGENT_STEPS = Number(process.env.MAX_AGENT_STEPS || 20);
+const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || 40);
+const MAX_RUNTIME_MS = Number(process.env.MAX_AGENT_RUNTIME_MS || 8 * 60_000);
+const STALL_REPEAT = 3;
+
+type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
+
+function extractToolCalls(response: { tool_calls?: ToolCall[] }): ToolCall[] {
+    return Array.isArray(response.tool_calls) ? response.tool_calls : [];
+}
+
+function bindModel() {
+    const maybeBind = model as BaseChatModel & {
+        bindTools?: (tools: typeof codingAgentTools) => BaseChatModel;
+    };
+    if (typeof maybeBind.bindTools === "function") {
+        return maybeBind.bindTools(codingAgentTools);
+    }
+    return model;
+}
+
+const toolMap = Object.fromEntries(codingAgentTools.map((t) => [t.name, t]));
+
+export async function runReactLoop(
+    state: WorkflowState,
+    extraUserMessage?: string,
+    maxSteps = MAX_AGENT_STEPS,
+): Promise<Partial<WorkflowState>> {
+    const runtime = requireAgentRuntime();
+    const started = Date.now();
+    const bound = bindModel();
+
+    const facts = state.templateFacts ? JSON.stringify(state.templateFacts, null, 2) : "{}";
+    const plan = state.agentPlan ? JSON.stringify(state.agentPlan, null, 2) : state.plan || "";
+
+    const messages: unknown[] = [
+        new SystemMessage(
+            SYSTEM_PROMPTS.REACT_SYSTEM_PROMPT +
+                `\n\nTemplateFacts:\n${facts}\n\nFile tree:\n${state.fileTree || ""}`,
+        ),
+        new HumanMessage(
+            `User request:\n${state.prompt}\n\nIntent plan:\n${plan}` +
+                (extraUserMessage ? `\n\n${extraUserMessage}` : ""),
+        ),
+    ];
+
+    const toolResults: unknown[] = [...(state.toolResults || [])];
+    let toolCalls = 0;
+    const stall: string[] = [];
+
+    sendSSEMessage(state.clientId, {
+        type: "react_start",
+        message: extraUserMessage ? "Repairing after build failure..." : "Inspecting and editing the project...",
+    });
+
+    for (let step = 0; step < maxSteps; step++) {
+        if (runtime.abortSignal.aborted || state.abortSignal?.aborted) {
+            return { error: "workflow aborted (eval timeout)", toolResults };
+        }
+        if (Date.now() - started > MAX_RUNTIME_MS) {
+            return { error: `Exceeded MAX_AGENT_RUNTIME_MS of ${MAX_RUNTIME_MS}`, toolResults };
+        }
+
+        const response = await bound.invoke(messages as never);
+        const calls = extractToolCalls(response as { tool_calls?: ToolCall[] });
+
+        if (!calls.length) {
+            sendSSEMessage(state.clientId, {
+                type: "react_complete",
+                message: `ReAct finished after ${step + 1} step(s)`,
+            });
+            return { toolResults, toolsExecuted: true };
+        }
+
+        messages.push(response);
+
+        for (const call of calls) {
+            if (toolCalls >= MAX_TOOL_CALLS) {
+                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true };
+            }
+
+            const signature = `${call.name}:${JSON.stringify(call.args)}`;
+            stall.push(signature);
+            if (stall.length > STALL_REPEAT) stall.shift();
+            if (stall.length === STALL_REPEAT && stall.every((s) => s === stall[0])) {
+                return {
+                    error: `Agent stalled repeating ${call.name}`,
+                    toolResults,
+                    toolsExecuted: true,
+                };
+            }
+
+            sendSSEMessage(state.clientId, {
+                type: "tool_executing",
+                message: `Executing: ${call.name}`,
+                toolName: call.name,
+            });
+
+            const tool = toolMap[call.name];
+            let result: unknown;
+            if (!tool) {
+                result = { success: false, message: `Unknown tool: ${call.name}` };
+            } else {
+                try {
+                    result = await (tool as { invoke: (args: unknown) => Promise<unknown> }).invoke(
+                        call.args ?? {},
+                    );
+                } catch (error) {
+                    result = {
+                        success: false,
+                        message: error instanceof Error ? error.message : String(error),
+                    };
+                }
+            }
+
+            toolCalls += 1;
+            toolResults.push({ toolCall: { tool: call.name, args: call.args }, result });
+
+            sendSSEMessage(state.clientId, {
+                type: result && typeof result === "object" && "success" in result && (result as { success: boolean }).success === false
+                    ? "tool_error"
+                    : "tool_completed",
+                message: `Completed: ${call.name}`,
+                toolName: call.name,
+            });
+
+            messages.push(
+                new ToolMessage({
+                    content: JSON.stringify(result),
+                    tool_call_id: call.id || call.name,
+                }),
+            );
+        }
+    }
+
+    return {
+        error: `Exceeded MAX_AGENT_STEPS of ${maxSteps}`,
+        toolResults,
+        toolsExecuted: true,
+    };
+}

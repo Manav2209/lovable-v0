@@ -2,6 +2,8 @@
 
 import { tool } from "langchain";
 import * as z from "zod";
+import fs from "fs";
+import path from "path";
 import { sendSSEMessage } from "../../../sse";
 import type { WorkflowState } from "../../graphs/workflow";
 import { getProjectDir, resolveSafePath, runProcess } from "../security";
@@ -18,10 +20,13 @@ export const testBuild = tool(
     const workingDir = cwd ? resolveSafePath(projectDir, cwd) : projectDir;
 
     try {
-      const install = await runProcess("bun", ["install"], {
-        cwd: workingDir,
-        timeoutMs: 3 * 60_000,
-      });
+      const viteReady = fs.existsSync(path.join(workingDir, "node_modules", "vite"));
+      const install = viteReady
+        ? { exitCode: 0, success: true, stderr: "" }
+        : await runProcess("bun", ["install"], {
+            cwd: workingDir,
+            timeoutMs: 8 * 60_000,
+          });
 
       if (install.exitCode !== 0) {
         return {

@@ -42,6 +42,7 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
             case "updateFile":
             case "lineReplace":
             case "replaceInFile":
+            case "patchFile":
                 if (args.filePath) {
                     filesModified.push(args.filePath);
                 }
@@ -56,6 +57,12 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
             case "executeCommand":
                 if (args.command) {
                     commandsExecuted.push(args.command);
+                }
+                break;
+
+            case "addShadcnComponent":
+                if (args.component) {
+                    commandsExecuted.push(`addShadcnComponent ${args.component}`);
                 }
                 break;
 

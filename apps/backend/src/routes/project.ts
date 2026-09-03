@@ -69,7 +69,11 @@ projectRouter.post("/project/:projectId/run", authMiddleware, async (req, res) =
             userId: req.userId!,
         });
 
-        const runRes = await responseManager.wait(projectId, 600_000);
+        const runRes = await responseManager.wait(projectId, 600_000, [
+            PROJECT_RUN_SUCCESS,
+            PROJECT_RUN_FAILED,
+            PROJECT_FAILED,
+        ]);
         const runResponse = JSON.parse(runRes);
 
         if (runResponse.type === PROJECT_RUN_SUCCESS) {
@@ -145,7 +149,11 @@ projectRouter.post(
         });
 
         try {
-            const buildRes = await responseManager.wait(projectId, 600_000);
+            const buildRes = await responseManager.wait(projectId, 600_000, [
+                PROJECT_BUILD_SUCCESS,
+                PROJECT_BUILD_FAILED,
+                PROJECT_FAILED,
+            ]);
             const buildResponse = JSON.parse(buildRes);
 
             if (buildResponse.type === PROJECT_BUILD_SUCCESS) {

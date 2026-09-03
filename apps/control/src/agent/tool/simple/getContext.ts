@@ -163,8 +163,7 @@ export const getContext = tool(
         const keyFiles = [
           "package.json",
           "src/App.jsx",
-          "src/index.jsx",
-          "src/index.js",
+          "src/main.jsx",
           "src/index.css",
           "src/lib/utils.js",
           "components.json"

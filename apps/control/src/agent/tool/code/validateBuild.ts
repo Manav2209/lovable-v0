@@ -4,7 +4,8 @@ import { tool } from "langchain";
 import * as z from "zod";
 
 import { sendSSEMessage } from "../../../sse";
-import { runProcess, resolveSafePath } from "../security";
+import { getProjectDir, runProcess } from "../security";
+import { collectTemplateFacts } from "../templateFacts";
 import type { WorkflowState } from "../../graphs/workflow";
 
 
@@ -20,6 +21,10 @@ interface BuildError {
   file?: string;
   line?: number;
   fixable: boolean;
+}
+
+function nodeModulesReady(projectDir: string): boolean {
+  return fs.existsSync(path.join(projectDir, "node_modules", "vite"));
 }
 
 function parseAndCategorizeBuildErrors(stderr: string, stdout: string): BuildError[] {
@@ -132,19 +137,7 @@ export const validateBuild = tool(
     const { projectId, userInstructions } = validateBuildInput.parse(input);
 
     try {
-      const sharedDir = process.env.SHARED_DIR || "/app/shared";
-      let projectDir: string;
-      try {
-        projectDir = resolveSafePath(sharedDir, projectId);
-      } catch (error) {
-        return {
-          success: false,
-          message: "Invalid project directory",
-          projectId,
-          userInstructions,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
+      const projectDir = getProjectDir();
 
       if (!fs.existsSync(projectDir)) {
         return {
@@ -156,7 +149,8 @@ export const validateBuild = tool(
         };
       }
 
-      const essentialFiles = ["package.json", "src/App.jsx", "src/index.jsx"];
+      const facts = collectTemplateFacts(projectDir);
+      const essentialFiles = ["package.json", facts.entryPoints.app, facts.entryPoints.main];
       const missingFiles = essentialFiles.filter(file => !fs.existsSync(path.join(projectDir, file)));
 
       if (missingFiles.length > 0) {
@@ -193,10 +187,12 @@ export const validateBuild = tool(
         };
       }
 
-      const install = await runProcess("bun", ["install"], {
-        cwd: projectDir,
-        timeoutMs: 3 * 60_000,
-      });
+      const install = nodeModulesReady(projectDir)
+        ? { success: true, stderr: "", error: undefined }
+        : await runProcess("bun", ["install"], {
+            cwd: projectDir,
+            timeoutMs: 8 * 60_000,
+          });
 
       if (!install.success) {
         throw new Error(
@@ -301,7 +297,10 @@ export async function validateNode(state: WorkflowState): Promise<Partial<Workfl
 
   const errorCount = result.errors?.length || 0;
 
-  if (result.success || errorCount === 0) {
+  // Only treat the node as success when the actual `bun run build` succeeded.
+  // A failed build with an unparsed stderr used to look like "0 errors" and
+  // skip the fix loop, then die later in testBuild with a generic error.
+  if (result.success === true) {
     sendSSEMessage(state.clientId, {
       type: "validation_success",
       message: "Build validation passed - no errors found",
@@ -320,9 +319,21 @@ export async function validateNode(state: WorkflowState): Promise<Partial<Workfl
     errorAnalysis: result.errorAnalysis,
   });
 
+  const errors =
+    result.errors && result.errors.length > 0
+      ? result.errors
+      : [
+          {
+            type: "unknown",
+            severity: "major",
+            message: result.error || result.message || "Build failed",
+            fixable: true,
+          },
+        ];
+
   return {
     buildStatus: "errors",
-    buildErrors: result.errors || [],
+    buildErrors: errors,
     buildOutput: result.error || result.buildOutput || "",
     errorAnalysis: result.errorAnalysis,
   };

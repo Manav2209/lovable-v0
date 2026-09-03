@@ -13,6 +13,9 @@ function resolveProvider(): LLMProvider {
     if (explicit === "google" || explicit === "groq" || explicit === "airouter") {
         return explicit;
     }
+    if (process.env.AIROUTER_API_KEY) {
+        return "airouter";
+    }
     return "groq";
 }
 

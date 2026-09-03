@@ -6,7 +6,7 @@ import { addDependency, removeDependency } from "../tool/simple/addAndRemoveDepe
 import { checkMissingPackage } from "../tool/simple/checkMissingPackage";
 import { createFile } from "../tool/simple/createFile";
 import { deleteFile } from "../tool/simple/deleteFile";
-import { executeCommand } from "../tool/simple/executeCommand";
+import { addShadcnComponent } from "../tool/simple/addShadcnComponent";
 import { getContext } from "../tool/simple/getContext";
 import { listDir } from "../tool/simple/listDir";
 import { readFile } from "../tool/simple/readFile";
@@ -19,8 +19,9 @@ import { pushFilesToR2 } from "../tool/r2/push";
 import { lineReplace } from "../tool/simple/lineReplace";
 import { grepSearch } from "../tool/simple/grepSearch";
 import { renameFile } from "../tool/simple/renameFile";
-import type { WorkflowState } from "./main";
-import { executeWorkflow } from "./main";
+import { createAgentRuntime, runWithAgentRuntime } from "../runtime";
+import type { WorkflowState } from "./workflow";
+import { executeWorkflow } from "./workflow";
 
 export const allTools = [
     promptAnalyzer,
@@ -32,7 +33,7 @@ export const allTools = [
     checkMissingPackage,
     createFile,
     deleteFile,
-    executeCommand,
+    addShadcnComponent,
     getContext,
     listDir,
     readFile,
@@ -52,5 +53,6 @@ export type { WorkflowState } from "./workflow";
 export { executeWorkflow } from "./workflow";
 
 export async function executeMainFlow(initialState: WorkflowState): Promise<WorkflowState> {
-    return await executeWorkflow(initialState);
+    const runtime = createAgentRuntime(initialState.projectId, initialState.abortSignal);
+    return runWithAgentRuntime(runtime, () => executeWorkflow(initialState));
 }

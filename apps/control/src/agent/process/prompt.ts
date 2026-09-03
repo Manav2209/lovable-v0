@@ -1,15 +1,12 @@
-
-
 import { sendSSEMessage, getProjectSSEUrl } from "../../sse";
 import { executeMainFlow } from "../graphs/main";
 import { getProjectMemories, saveConversationMemory } from "../../memory";
 import { publishStreamEvent } from "../../events/sink";
-import { ControlToOrchestrator, OrchestatorToBackend, PROMPT_RESPONSE } from "types";
+import { ControlToOrchestrator, PROMPT_RESPONSE } from "types";
 
 export async function processPrompt(
   projectId: string,
   prompt: string,
-  
 ): Promise<void> {
   console.log(`Starting agent processing for project ${projectId}: ${prompt}`);
 
@@ -17,7 +14,6 @@ export async function processPrompt(
 
   try {
     const memories = await getProjectMemories(projectId);
-    const contextInfo = memories.length > 0 ? `Previous context: ${JSON.stringify(memories.slice(-5))}` : "";
 
     sendSSEMessage(clientIdUsed, {
       type: "started",
@@ -37,7 +33,8 @@ export async function processPrompt(
     try {
       finalState = await executeMainFlow({
         projectId,
-        prompt: prompt + (contextInfo ? `\n\n${contextInfo}` : ""),
+        prompt,
+        previousContext: memories.slice(-5),
         clientId: clientIdUsed,
         fixAttempts: 0,
         maxFixAttempts: Number(process.env.MAX_FIX_ATTEMPTS || 5),
@@ -67,8 +64,6 @@ export async function processPrompt(
         await saveConversationMemory(projectId, prompt, aiResponse);
 
         console.log(`Agent completed successfully for project ${projectId}`);
-
-  
     } else {
       sendSSEMessage(clientIdUsed, {
         type: "error",

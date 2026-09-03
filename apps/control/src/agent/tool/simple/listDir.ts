@@ -43,6 +43,13 @@ export const listDir = tool(async (input: z.infer<typeof listDirInput>) => {
             };
             });
         } else {
+            if (!fs.existsSync(fullPath)) {
+                return {
+                    message: `Directory does not exist: ${directory}`,
+                    items: [],
+                    totalItems: 0,
+                };
+            }
             const dirItems = fs.readdirSync(fullPath, { withFileTypes: true });
             items = dirItems.map((item) => {
             const itemPath = path.join(fullPath, item.name);
@@ -70,8 +77,10 @@ export const listDir = tool(async (input: z.infer<typeof listDirInput>) => {
     }
     },
     {
-        name: "listDir",
+        name: "listFiles",
         description: "Lists the contents of a directory with optional glob pattern filtering. Returns file/directory information including sizes.",
         schema: listDirInput,
     },
 );
+
+export const listFiles = listDir;

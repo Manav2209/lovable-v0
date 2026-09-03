@@ -30,7 +30,7 @@ export const EVAL_CASES: EvalCase[] = [
         tier: "easy",
         prompt:
             "Create a todo list app. Users should be able to type a task in an input field, add it to a list, mark tasks as complete (strikethrough), and delete tasks.",
-        expectedFeatures: ["useState", "input", "todo", "delete", "file:src/App.tsx"],
+        expectedFeatures: ["useState", "input", "todo", "delete", "file:src/App.jsx"],
         maxDurationMs: 10 * 60_000,
         maxFixAttempts: 3,
     },

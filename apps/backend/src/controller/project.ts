@@ -60,7 +60,10 @@ export const createProject = async (req: Request, res: Response) => {
         prompt: data.prompt,
     });
     try {
-        const result = await responseManager.wait(projectId, 120_000);
+        const result = await responseManager.wait(projectId, 120_000, [
+            PROJECT_INITIALIZED,
+            PROJECT_FAILED,
+        ]);
         const parsed = JSON.parse(result);
 
         if (parsed.type === PROJECT_INITIALIZED) {
@@ -178,7 +181,10 @@ export const createConversation = async (req: Request, res: Response) => {
     });
 
     try {
-        const response = await responseManager.wait(projectId, 600_000);
+        const response = await responseManager.wait(projectId, 600_000, [
+            PROMPT_RESPONSE,
+            PROJECT_FAILED,
+        ]);
         const parsed = JSON.parse(response);
 
         if (parsed.type === PROMPT_RESPONSE) {

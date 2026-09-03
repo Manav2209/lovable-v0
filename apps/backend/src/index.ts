@@ -17,6 +17,6 @@ app.use("/api/v1/auth" ,authRouter);
 app.use("/api/v1" , projectRouter)
 
 app.listen(4000, () => {
-  console.log("App is listening on port 3000");
+  console.log("App is listening on port 4000");
 });
 

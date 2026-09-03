@@ -57,10 +57,13 @@ export const buildProjectAndNotifyToRun = async (
   }
 
   try {
-    const install = await runProcess("bun", ["install"], {
-      cwd: dir,
-      timeoutMs: 3 * 60_000,
-    });
+    const viteReady = fs.existsSync(path.join(dir, "node_modules", "vite"));
+    const install = viteReady
+      ? { success: true, stderr: "", error: undefined }
+      : await runProcess("bun", ["install"], {
+          cwd: dir,
+          timeoutMs: 8 * 60_000,
+        });
 
     if (!install.success) {
       const installStderr = install.stderr || install.error || "unknown error";
@@ -145,7 +148,9 @@ export async function runNode(state: WorkflowState): Promise<Partial<WorkflowSta
     message: "Running application...",
   });
 
-  await buildSource.invoke({ projectId: state.projectId });
+  // Validate + test already ran `bun run build`. Do not call buildSource here:
+  // that tool also publishes PROJECT_BUILD_* to the orchestrator and can steal
+  // the in-flight prompt waiter (keyed only by projectId).
 
   await publishStreamEvent(ControlToServing, {
     data: JSON.stringify({
@@ -155,8 +160,8 @@ export async function runNode(state: WorkflowState): Promise<Partial<WorkflowSta
   })
 
   sendSSEMessage(state.clientId, {
-    type: "completed",
-    message: "Workflow completed successfully",
+    type: "app_running",
+    message: "Preview start requested",
   });
 
   return { completed: true };
