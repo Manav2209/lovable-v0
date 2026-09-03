@@ -89,7 +89,7 @@ export const grepSearch = tool(
         }
     },
     {
-        name: "grepSearch",
+        name: "searchFiles",
         description: `Regex-based code search across repository files.
 
 Searches for regex patterns within file contents and returns matching lines with context.
@@ -109,3 +109,5 @@ Search strategies:
         schema: grepSearchInput,
     },
 );
+
+export const searchFiles = grepSearch;

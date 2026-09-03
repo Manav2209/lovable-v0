@@ -77,8 +77,10 @@ export const listDir = tool(async (input: z.infer<typeof listDirInput>) => {
     }
     },
     {
-        name: "listDir",
+        name: "listFiles",
         description: "Lists the contents of a directory with optional glob pattern filtering. Returns file/directory information including sizes.",
         schema: listDirInput,
     },
 );
+
+export const listFiles = listDir;
