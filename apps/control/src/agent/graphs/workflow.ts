@@ -1,18 +1,14 @@
 import { sendSSEMessage } from "../../sse";
 import { userGivenPromptCheckerNode } from "../tool/code/userGivenPromptChecker";
-import { analyzeNode } from "../tool/code/smartAnalyzer";
-import { enhancePromptNode } from "../tool/code/enhancePrompt";
 import { planerNode } from "../tool/code/plannerPrompt";
-import { getContextNode } from "../tool/simple/getContext";
+import { collectWorkspaceFactsNode } from "../tool/templateFacts";
 import { validateNode } from "../tool/code/validateBuild";
-import { testBuildNode } from "../tool/simple/testBuild";
-import { fixErrorsNode } from "../tool/code/intelligentErrorFixer";
 import { pushNode } from "../tool/r2/push";
 import { saveNode } from "../tool/simple/saveContext";
 import { runNode } from "../tool/code/buildSource";
 import { summarizeChangesNode } from "../tool/simple/summarizeChanges";
 import { stitchAppNode } from "../tool/code/stitchApp";
-import { allTools } from "./main";
+import { runReactLoop } from "./toolLoop";
 
 export interface WorkflowState {
     projectId: string;
@@ -38,11 +34,7 @@ export interface WorkflowState {
     buildOutput?: string;
     errorAnalysis?: any;
     fixAttempts: number;
-    // Optional cap on auto-fix iterations. When set, the loop stops once
-    // fixAttempts reaches this budget. Production sets it in processPrompt.
     maxFixAttempts?: number;
-    // When supplied, the workflow stops issuing new work as soon as the
-    // signal is aborted (used to cancel eval cases on timeout).
     abortSignal?: AbortSignal;
     completed: boolean;
     error?: string;
@@ -64,112 +56,29 @@ export interface WorkflowState {
 }
 
 const ABORT_ERROR = "workflow aborted (eval timeout)";
+const MAX_REPAIR_STEPS = Number(process.env.MAX_REPAIR_STEPS || 8);
 
 function isAborted(state: WorkflowState): boolean {
     return state.abortSignal?.aborted === true;
 }
 
-async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
-    if (state.fixesApplied) {
-        sendSSEMessage(state.clientId, {
-            type: "skipping_execution",
-            message: "Skipping tool execution, re-validating after fixes...",
-        });
-        return { fixesApplied: false, toolsExecuted: true };
-    }
-
-    if (state.toolsExecuted) {
-        sendSSEMessage(state.clientId, {
-            type: "skipping_execution",
-            message: "Tools already executed; re-validating without rewriting files...",
-        });
-        return {};
-    }
-
+async function finishSuccess(state: WorkflowState): Promise<WorkflowState> {
     sendSSEMessage(state.clientId, {
-        type: "executing",
-        message: "Executing tools...",
+        type: "build_success",
+        message: "Build passed, persisting workspace and notifying serve",
     });
 
-    const toolCalls = state.toolCalls || [];
-    const toolResults = [];
-    const toolMap = allTools.reduce(
-        (acc, tool) => {
-            acc[tool.name] = tool;
-            return acc;
-        },
-        {} as Record<string, any>,
-    );
+    const pushResult = await pushNode(state);
+    state = { ...state, ...pushResult };
 
-    for (const toolCall of toolCalls) {
-        if (isAborted(state)) {
-            sendSSEMessage(state.clientId, {
-                type: "aborted",
-                message: "Workflow aborted — skipping remaining tools",
-            });
-            break;
-        }
+    const saveResult = await saveNode(state);
+    state = { ...state, ...saveResult };
 
-        sendSSEMessage(state.clientId, {
-            type: "tool_executing",
-            message: `Executing: ${toolCall.tool}`,
-            toolName: toolCall.tool,
-        });
+    const runResult = await runNode(state);
+    state = { ...state, ...runResult };
 
-        let attempts = 0;
-        let success = false;
-        let result;
-
-        while (attempts < 2 && !success) {
-            try {
-                const tool = toolMap[toolCall.tool];
-                if (!tool) {
-                    throw new Error(`Tool ${toolCall.tool} not found`);
-                }
-
-                const toolResult = await tool.invoke(toolCall.args);
-
-                sendSSEMessage(state.clientId, {
-                    type: "tool_completed",
-                    message: `Completed: ${toolCall.tool}`,
-                    toolName: toolCall.tool,
-                });
-
-                result = { toolCall, result: toolResult };
-                success = true;
-            } catch (error) {
-                attempts++;
-                if (attempts >= 2) {
-                    sendSSEMessage(state.clientId, {
-                        type: "tool_error",
-                        message: `Failed: ${toolCall.tool}`,
-                        toolName: toolCall.tool,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                    result = {
-                        toolCall,
-                        error: error instanceof Error ? error.message : String(error),
-                    };
-                } else {
-                    sendSSEMessage(state.clientId, {
-                        type: "tool_retry",
-                        message: `Retrying: ${toolCall.tool}`,
-                        toolName: toolCall.tool,
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-        }
-
-        toolResults.push(result);
-    }
-
-    sendSSEMessage(state.clientId, {
-        type: "execution_complete",
-        message: `Executed ${toolResults.length} tools`,
-    });
-
-    return { toolResults, toolsExecuted: true };
+    const summaryResult = await summarizeChangesNode(state);
+    return { ...state, ...summaryResult };
 }
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
@@ -178,40 +87,23 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
     try {
         sendSSEMessage(state.clientId, {
             type: "workflow_started",
-            message: "Starting LangGraph workflow execution",
+            message: "Starting ReAct agent workflow",
         });
 
         const promptCheckResult = await userGivenPromptCheckerNode(state);
         state = { ...state, ...promptCheckResult };
-
         if (state.error) {
             throw new Error(`Prompt validation failed: ${state.error}`);
         }
 
-        const contextResult = await getContextNode(state);
-        state = { ...state, ...contextResult };
-
+        const factsResult = await collectWorkspaceFactsNode(state);
+        state = { ...state, ...factsResult };
         if (state.error) {
-            throw new Error(`Failed to get context: ${state.error}`);
-        }
-
-        const analysisResult = await analyzeNode(state);
-        state = { ...state, ...analysisResult };
-
-        if (state.error) {
-            throw new Error(`Failed to analyze: ${state.error}`);
-        }
-
-        const enhanceResult = await enhancePromptNode(state);
-        state = { ...state, ...enhanceResult };
-
-        if (state.error) {
-            throw new Error(`Failed to enhance prompt: ${state.error}`);
+            throw new Error(`Failed to collect template facts: ${state.error}`);
         }
 
         const planResult = await planerNode(state);
         state = { ...state, ...planResult };
-
         if (state.error) {
             throw new Error(`Failed to create plan: ${state.error}`);
         }
@@ -222,115 +114,70 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             return state;
         }
 
-        while (
-            !state.completed &&
-            !state.error &&
-            !isAborted(state) &&
-            (state.maxFixAttempts == null || state.fixAttempts < state.maxFixAttempts)
-        ) {
-            const executeResult = await executeNode(state);
-            state = { ...state, ...executeResult };
-
-            if (isAborted(state)) break;
-
-            // Always compose generated components into App.jsx before validate/build.
-            const stitchResult = await stitchAppNode(state);
-            state = { ...state, ...stitchResult };
-
-            const validateResult = await validateNode(state);
-            state = { ...state, ...validateResult };
-
-            if (isAborted(state)) break;
-
-            if (state.buildStatus === "success") {
-                const testResult = await testBuildNode(state);
-                state = { ...state, ...testResult };
-
-                if (isAborted(state)) break;
-
-                if (state.buildStatus === "tested") {
-                    sendSSEMessage(state.clientId, {
-                        type: "build_success",
-                        message: "Build test passed, proceeding to deployment",
-                    });
-
-                    // const pushResult = await pushNode(state);
-                    // state = { ...state, ...pushResult };
-
-                    const saveResult = await saveNode(state);
-                    state = { ...state, ...saveResult };
-
-                    const runResult = await runNode(state);
-                    state = { ...state, ...runResult };
-
-                    const summaryResult = await summarizeChangesNode(state);
-                    state = { ...state, ...summaryResult };
-
-                    break;
-                }
-                const fixResult = await fixErrorsNode(state);
-                state = { ...state, ...fixResult };
-            } else if (state.buildStatus === "errors" && state.buildErrors && state.buildErrors.length > 0) {
-                const fixResult = await fixErrorsNode(state);
-                state = { ...state, ...fixResult };
-            } else {
-                const errorMsg = "Build validation did not return success or errors status";
-                console.error(errorMsg, { buildStatus: state.buildStatus, buildErrors: state.buildErrors });
-                state.error = errorMsg;
-                break;
-            }
-
-            if (isAborted(state)) {
-                state.error = ABORT_ERROR;
-                state.completed = false;
-                break;
-            }
-
-            if (state.noFixesAvailable) {
-                state.error = "Unable to generate fixes for the errors. The LLM could not determine how to fix the issues.";
-                sendSSEMessage(state.clientId, {
-                    type: "error",
-                    message: state.error,
-                });
-                break;
-            }
+        const reactResult = await runReactLoop(state);
+        state = { ...state, ...reactResult };
+        if (state.error) {
+            throw new Error(state.error);
         }
 
-        if (!state.completed && !state.error) {
-            if (isAborted(state)) {
-                state.error = ABORT_ERROR;
-                state.completed = false;
-            } else if (
-                state.maxFixAttempts != null &&
-                state.fixAttempts >= state.maxFixAttempts
-            ) {
-                state.error = `Exceeded maxFixAttempts budget of ${state.maxFixAttempts}`;
-                sendSSEMessage(state.clientId, {
-                    type: "error",
-                    message: state.error,
-                });
-            } else {
-                state.error = "Workflow ended without completion or error";
-            }
+        const stitchResult = await stitchAppNode(state);
+        state = { ...state, ...stitchResult };
+
+        const validateResult = await validateNode(state);
+        state = { ...state, ...validateResult };
+
+        if (isAborted(state)) {
+            state.error = ABORT_ERROR;
+            state.completed = false;
+            return state;
         }
 
-        if (
-            !state.changeSummary &&
-            state.toolResults &&
-            state.toolResults.length > 0 &&
-            !isAborted(state)
-        ) {
+        const repairBudget = state.maxFixAttempts ?? 2;
+        while (state.buildStatus === "errors" && state.fixAttempts < repairBudget && !isAborted(state)) {
+            state.fixAttempts += 1;
+            sendSSEMessage(state.clientId, {
+                type: "repairing",
+                message: `Repair attempt ${state.fixAttempts}/${repairBudget}`,
+            });
+
+            const diagnostics = [
+                "The vite build failed. Inspect the listed files and apply a minimal fix.",
+                `Build errors: ${JSON.stringify(state.buildErrors || []).slice(0, 8000)}`,
+                state.buildOutput ? `Build output:\n${state.buildOutput.slice(0, 8000)}` : "",
+            ].join("\n\n");
+
+            const repair = await runReactLoop(state, diagnostics, MAX_REPAIR_STEPS);
+            state = { ...state, ...repair, error: undefined };
+
+            if (state.error) break;
+
+            const revalidate = await validateNode(state);
+            state = { ...state, ...revalidate };
+        }
+
+        if (isAborted(state)) {
+            state.error = ABORT_ERROR;
+            state.completed = false;
+            return state;
+        }
+
+        if (state.buildStatus === "success") {
+            return await finishSuccess(state);
+        }
+
+        if (!state.error) {
+            state.error =
+                state.buildStatus === "errors"
+                    ? "Build failed after repair budget"
+                    : "Workflow ended without a successful build";
+        }
+
+        if (state.toolResults && state.toolResults.length > 0) {
             const summaryResult = await summarizeChangesNode(state);
             state = { ...state, ...summaryResult };
         }
 
-        if (isAborted(state)) {
-            sendSSEMessage(state.clientId, {
-                type: "aborted",
-                message: ABORT_ERROR,
-            });
-        }
-
+        state.completed = false;
         return state;
     } catch (error) {
         console.error("Workflow execution error:", error);
@@ -344,7 +191,7 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         state.error = errorMessage;
         state.completed = false;
 
-        if (state.toolResults && state.toolResults.length > 0) {
+        if (state.toolResults && state.toolResults.length > 0 && !isAborted(state)) {
             const summaryResult = await summarizeChangesNode(state);
             state = { ...state, ...summaryResult };
         }

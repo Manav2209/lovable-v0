@@ -6,7 +6,7 @@ import { addDependency, removeDependency } from "../tool/simple/addAndRemoveDepe
 import { checkMissingPackage } from "../tool/simple/checkMissingPackage";
 import { createFile } from "../tool/simple/createFile";
 import { deleteFile } from "../tool/simple/deleteFile";
-import { executeCommand } from "../tool/simple/executeCommand";
+import { addShadcnComponent } from "../tool/simple/addShadcnComponent";
 import { getContext } from "../tool/simple/getContext";
 import { listDir } from "../tool/simple/listDir";
 import { readFile } from "../tool/simple/readFile";
@@ -33,7 +33,7 @@ export const allTools = [
     checkMissingPackage,
     createFile,
     deleteFile,
-    executeCommand,
+    addShadcnComponent,
     getContext,
     listDir,
     readFile,

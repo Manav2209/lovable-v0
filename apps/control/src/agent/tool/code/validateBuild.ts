@@ -4,7 +4,8 @@ import { tool } from "langchain";
 import * as z from "zod";
 
 import { sendSSEMessage } from "../../../sse";
-import { runProcess, resolveSafePath } from "../security";
+import { getProjectDir, runProcess } from "../security";
+import { collectTemplateFacts } from "../templateFacts";
 import type { WorkflowState } from "../../graphs/workflow";
 
 
@@ -136,19 +137,7 @@ export const validateBuild = tool(
     const { projectId, userInstructions } = validateBuildInput.parse(input);
 
     try {
-      const sharedDir = process.env.SHARED_DIR || "/app/shared";
-      let projectDir: string;
-      try {
-        projectDir = resolveSafePath(sharedDir, projectId);
-      } catch (error) {
-        return {
-          success: false,
-          message: "Invalid project directory",
-          projectId,
-          userInstructions,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
+      const projectDir = getProjectDir();
 
       if (!fs.existsSync(projectDir)) {
         return {
@@ -160,7 +149,8 @@ export const validateBuild = tool(
         };
       }
 
-      const essentialFiles = ["package.json", "src/App.jsx", "src/main.jsx"];
+      const facts = collectTemplateFacts(projectDir);
+      const essentialFiles = ["package.json", facts.entryPoints.app, facts.entryPoints.main];
       const missingFiles = essentialFiles.filter(file => !fs.existsSync(path.join(projectDir, file)));
 
       if (missingFiles.length > 0) {
