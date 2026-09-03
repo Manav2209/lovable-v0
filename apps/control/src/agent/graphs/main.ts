@@ -19,8 +19,9 @@ import { pushFilesToR2 } from "../tool/r2/push";
 import { lineReplace } from "../tool/simple/lineReplace";
 import { grepSearch } from "../tool/simple/grepSearch";
 import { renameFile } from "../tool/simple/renameFile";
-import type { WorkflowState } from "./main";
-import { executeWorkflow } from "./main";
+import { createAgentRuntime, runWithAgentRuntime } from "../runtime";
+import type { WorkflowState } from "./workflow";
+import { executeWorkflow } from "./workflow";
 
 export const allTools = [
     promptAnalyzer,
@@ -52,5 +53,6 @@ export type { WorkflowState } from "./workflow";
 export { executeWorkflow } from "./workflow";
 
 export async function executeMainFlow(initialState: WorkflowState): Promise<WorkflowState> {
-    return await executeWorkflow(initialState);
+    const runtime = createAgentRuntime(initialState.projectId, initialState.abortSignal);
+    return runWithAgentRuntime(runtime, () => executeWorkflow(initialState));
 }

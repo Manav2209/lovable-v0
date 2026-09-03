@@ -83,8 +83,6 @@ async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>
         message: "Executing tools...",
     });
 
-    process.env.PROJECT_ID = state.projectId;
-
     const toolCalls = state.toolCalls || [];
     const toolResults = [];
     const toolMap = allTools.reduce(
@@ -168,7 +166,6 @@ async function executeNode(state: WorkflowState): Promise<Partial<WorkflowState>
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
     let state = { ...initialState };
-    process.env.PROJECT_ID = state.projectId;
 
     try {
         sendSSEMessage(state.clientId, {
