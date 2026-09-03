@@ -3,7 +3,8 @@ import path from "path";
 import type { EvalCase } from "../dataset";
 import { seedWorkspace } from "./workspace";
 import { extractMetrics, runChecks, type CheckResult, type EvalMetrics } from "../checks";
-import { traceCase } from "@control/observability/langfuse";
+import { traceAgentRun } from "@control/observability/langfuse";
+import { emptyAgentStats } from "@control/agent/agentStats";
 import { judgeCase, type JudgeResult } from "../judge";
 import {
     type AgentRunResult,
@@ -82,12 +83,14 @@ export async function runCase(
 
         const abortController = new AbortController();
 
-        const workflowPromise = traceCase(
+        const workflowPromise = traceAgentRun(
             {
                 runId: options.runId,
                 caseId: evalCase.id,
-                tier: evalCase.tier,
+                projectId: workspace.projectId,
                 prompt: evalCase.prompt,
+                tier: evalCase.tier,
+                agentMode: "eval",
             },
             async () =>
                 executeMainFlow({
@@ -101,7 +104,10 @@ export async function runCase(
                     messages: [],
                     threadId: workspace.projectId,
                 }),
-        ).catch((err: unknown): never => {
+        ).then(({ value, traceId }) => ({
+            ...value,
+            traceId: traceId ?? value.traceId,
+        })).catch((err: unknown): never => {
             throw err instanceof Error ? err : new Error(String(err));
         });
 
@@ -148,6 +154,7 @@ export async function runCase(
                 error: final.error,
                 eventsCaptured: getMemoryEvents().length,
                 workspaceDiff,
+                traceId: final.traceId,
                 build: {
                     status:
                         final.buildStatus === "success" || final.buildStatus === "tested"

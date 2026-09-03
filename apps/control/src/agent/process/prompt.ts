@@ -3,6 +3,7 @@ import { executeMainFlow } from "../graphs/main";
 import { getProjectMemories, saveConversationMemory } from "../../memory";
 import { publishStreamEvent } from "../../events/sink";
 import { ControlToOrchestrator, PROMPT_RESPONSE } from "types";
+import { traceAgentRun } from "../../observability/langfuse";
 
 export async function processPrompt(
   projectId: string,
@@ -31,17 +32,27 @@ export async function processPrompt(
 
     let finalState;
     try {
-      finalState = await executeMainFlow({
-        projectId,
-        prompt,
-        previousContext: memories.slice(-5),
-        clientId: clientIdUsed,
-        fixAttempts: 0,
-        maxFixAttempts: Number(process.env.MAX_FIX_ATTEMPTS || 5),
-        completed: false,
-        messages: [],
-        threadId: projectId,
-      });
+      const traced = await traceAgentRun(
+        {
+          runId: projectId,
+          projectId,
+          prompt,
+          agentMode: "production",
+        },
+        () =>
+          executeMainFlow({
+            projectId,
+            prompt,
+            previousContext: memories.slice(-5),
+            clientId: clientIdUsed,
+            fixAttempts: 0,
+            maxFixAttempts: Number(process.env.MAX_FIX_ATTEMPTS || 5),
+            completed: false,
+            messages: [],
+            threadId: projectId,
+          }),
+      );
+      finalState = { ...traced.value, traceId: traced.traceId ?? traced.value.traceId };
     } catch (flowError) {
         console.error(`Flow execution error for project ${projectId}:`, flowError);
         sendSSEMessage(clientIdUsed, {

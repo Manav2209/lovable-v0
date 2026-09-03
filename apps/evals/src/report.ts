@@ -113,6 +113,9 @@ export async function writeReport(
         lines.push(`| Files deleted | ${c.result.files?.deleted ?? c.result.workspaceDiff?.deleted.length ?? 0} |`);
         lines.push(`| Dependencies added | ${c.metrics.dependenciesAdded} |`);
         lines.push(`| Events captured | ${c.result.eventsCaptured} |`);
+        if (c.result.traceId) {
+            lines.push(`| Trace | \`${c.result.traceId}\` |`);
+        }
         if (c.result.error) {
             lines.push(`| Error | ${c.result.error.slice(0, 200)} |`);
         }

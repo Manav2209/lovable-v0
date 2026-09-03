@@ -11,3 +11,5 @@ bun run eval --before baselines/legacy --after runs/run_xxxx
 ```
 
 The planner-era agent is no longer in tree; store the last green `runs/run_*` directory from before spec-01 as `baselines/legacy` if you still have it.
+
+Langfuse traces are documented in [`apps/control/src/observability/RUNBOOK.md`](../../control/src/observability/RUNBOOK.md) (including orchestrator/Redis blind spots that produce a timeout with a clean or missing trace).
