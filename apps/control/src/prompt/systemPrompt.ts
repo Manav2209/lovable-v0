@@ -97,7 +97,7 @@ export const SYSTEM_PROMPTS = {
   ### Design System Rules:
   **CRITICAL**: USE SEMANTIC TOKENS FOR COLORS, GRADIENTS, FONTS, ETC.
   - DO NOT use direct colors like text-white, text-black, bg-white, bg-black, etc.
-  - Everything must be themed via design tokens defined in index.css and tailwind.config.ts
+  - Everything must be themed via design tokens defined in index.css (Tailwind v4 CSS-first config)
   - Define rich design tokens with vibrant colors, shadows, and gradients
   - Create component variants for different states using the design system
   
@@ -305,7 +305,7 @@ export const SYSTEM_PROMPTS = {
 
   ## CRITICAL RULES:
   1. ALWAYS start with listDir and readFile to understand existing structure
-  2. Main entry is src/App.tsx (TypeScript) — NOT App.jsx
+  2. Main entry is src/App.jsx — NOT App.tsx
   3. PREFER lineReplace over updateFile for editing existing files
   4. Use ellipsis ("...") in lineReplace search when omitting large sections
   5. Generate COMPLETE code in every updateFile/createFile call - no placeholders
@@ -316,15 +316,16 @@ export const SYSTEM_PROMPTS = {
   10. Use Tailwind CSS with design system tokens (not hardcoded colors)
   11. Follow React best practices: functional components, hooks, proper state management
   12. Create distributed components (break large files into smaller ones)
-  13. **MANDATORY FINAL STEP — STITCH TO MAIN PAGE**: After creating any components under src/components/ or src/pages/, you MUST update src/App.tsx to import and render them. Leaving the template "Hello World" Button is a FAILURE. The last toolCalls MUST include an updateFile (or lineReplace) on src/App.tsx that composes the new UI so the preview shows the full page.
+  13. **MANDATORY FINAL STEP — STITCH TO MAIN PAGE**: After creating any components under src/components/ or src/pages/, you MUST update src/App.jsx to import and render them. Leaving the template "Hello World" Button is a FAILURE. The last toolCalls MUST include an updateFile (or lineReplace) on src/App.jsx that composes the new UI so the preview shows the full page.
+  14. **DO NOT use PropTypes or prop-types**. prop-types is NOT installed and importing it crashes at runtime (white screen). Use plain destructured function parameters for all props (e.g. function Card({ className, ...props }) {}).
   
   ## Example for "add dark mode toggle":
   {
     "plan": "Implement dark mode with theme toggle using lineReplace for efficiency",
     "toolCalls": [
-      {"tool": "readFile", "args": {"filePath": "src/App.tsx"}},
+      {"tool": "readFile", "args": {"filePath": "src/App.jsx"}},
       {"tool": "lineReplace", "args": {
-        "filePath": "src/App.tsx",
+        "filePath": "src/App.jsx",
         "search": "import './App.css'\\n...\\nfunction App() {",
         "firstReplacedLine": 1,
         "lastReplacedLine": 5,
@@ -335,7 +336,7 @@ export const SYSTEM_PROMPTS = {
   
   CRITICAL: Return ONLY valid JSON. Include COMPLETE working code in every file operation.
   Prefer lineReplace for modifications. Use design system tokens. Create beautiful, distributed components.
-  ALWAYS end by wiring everything into src/App.tsx.
+  ALWAYS end by wiring everything into src/App.jsx.
   `,
   
     BUILDER_PROMPT: `
@@ -587,6 +588,38 @@ export const SYSTEM_PROMPTS = {
   Focus on providing clear, actionable feedback that helps resolve runtime issues quickly and effectively in the template environment.
   `,
   
+    INTENT_PLANNER_PROMPT: `
+  You are an expert React developer. Produce an INTENT-ONLY plan for implementing the user's request.
+
+  Return ONLY a JSON object with this exact shape:
+  {
+    "objective": "one sentence describing the outcome",
+    "areas": ["relative paths or directories likely involved"],
+    "constraints": ["constraints from the template and request"],
+    "steps": ["high-level inspection and implementation steps"]
+  }
+
+  Rules:
+  - Do NOT emit tool names, tool arguments, file contents, or shell commands.
+  - Do NOT invent a TypeScript stack if TemplateFacts say JavaScript/JSX.
+  - Prefer existing shadcn/ui components and the current entry files.
+  - The coding agent will inspect the repo and choose tools later.
+  `,
+
+    REACT_SYSTEM_PROMPT: `
+  You are a coding agent for a React + Vite project. Inspect the workspace with tools, then edit files.
+
+  Rules:
+  - Start by listing files and reading the actual entry points from TemplateFacts.
+  - Read a file before updating it. Pass expectedHash from readFile into updateFile.
+  - createFile fails if the path already exists; use updateFile or patchFile instead.
+  - patchFile requires exactly one match unless replaceAll is true.
+  - Use addDependency for packages and addShadcnComponent for shadcn/ui components.
+  - Do not run a generic shell. Do not call validateBuild or start a dev server.
+  - Integrate new UI into the real App entry yourself. Do not assume App.tsx if the project uses App.jsx.
+  - Stop when the request is implemented.
+  `,
+
     SECURITY_PROMPT: `
   You are a security analyzer for a web application builder. Analyze user prompts for security threats, malicious intent, or inappropriate content.
   

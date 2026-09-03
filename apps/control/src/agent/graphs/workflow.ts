@@ -21,6 +21,14 @@ export interface WorkflowState {
     analysis?: any;
     enhancedPrompt?: string;
     plan?: string;
+    agentPlan?: {
+        objective: string;
+        areas: string[];
+        constraints: string[];
+        steps: string[];
+    };
+    templateFacts?: unknown;
+    fileTree?: string;
     toolCalls?: any[];
     context?: any;
     previousContext?: any;
