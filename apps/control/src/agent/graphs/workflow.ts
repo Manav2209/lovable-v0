@@ -9,6 +9,7 @@ import { runNode } from "../tool/code/buildSource";
 import { summarizeChangesNode } from "../tool/simple/summarizeChanges";
 import { stitchAppNode } from "../tool/code/stitchApp";
 import { runReactLoop } from "./toolLoop";
+import { emptyAgentStats, mergeAgentStats, type AgentStats } from "../agentStats";
 
 export interface WorkflowState {
     projectId: string;
@@ -53,6 +54,7 @@ export interface WorkflowState {
         buildStatus: string;
         summary: string;
     };
+    agentStats?: AgentStats;
 }
 
 const ABORT_ERROR = "workflow aborted (eval timeout)";
@@ -82,7 +84,7 @@ async function finishSuccess(state: WorkflowState): Promise<WorkflowState> {
 }
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
-    let state = { ...initialState };
+    let state = { ...initialState, agentStats: initialState.agentStats ?? emptyAgentStats() };
 
     try {
         sendSSEMessage(state.clientId, {
@@ -115,16 +117,27 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         }
 
         const reactResult = await runReactLoop(state);
-        state = { ...state, ...reactResult };
+        state = {
+            ...state,
+            ...reactResult,
+            agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), reactResult.agentStats ?? {}),
+        };
         if (state.error) {
             throw new Error(state.error);
         }
 
         const stitchResult = await stitchAppNode(state);
         state = { ...state, ...stitchResult };
+        if ((stitchResult.toolResults || []).some((r: { toolCall?: { tool?: string } }) => r.toolCall?.tool === "stitchApp")) {
+            state.agentStats = mergeAgentStats(state.agentStats ?? emptyAgentStats(), { stitchInvoked: true });
+        }
 
         const validateResult = await validateNode(state);
-        state = { ...state, ...validateResult };
+        state = {
+            ...state,
+            ...validateResult,
+            agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), { buildCount: 1 }),
+        };
 
         if (isAborted(state)) {
             state.error = ABORT_ERROR;
@@ -147,12 +160,21 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             ].join("\n\n");
 
             const repair = await runReactLoop(state, diagnostics, MAX_REPAIR_STEPS);
-            state = { ...state, ...repair, error: undefined };
+            state = {
+                ...state,
+                ...repair,
+                error: undefined,
+                agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), repair.agentStats ?? {}),
+            };
 
             if (state.error) break;
 
             const revalidate = await validateNode(state);
-            state = { ...state, ...revalidate };
+            state = {
+                ...state,
+                ...revalidate,
+                agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), { buildCount: 1 }),
+            };
         }
 
         if (isAborted(state)) {

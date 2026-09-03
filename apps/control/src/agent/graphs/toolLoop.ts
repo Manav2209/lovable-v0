@@ -6,6 +6,7 @@ import { sendSSEMessage } from "../../sse";
 import { requireAgentRuntime } from "../runtime";
 import { codingAgentTools } from "../tool/codingTools";
 import type { WorkflowState } from "./workflow";
+import { emptyAgentStats, recordToolUse, type AgentStats } from "../agentStats";
 
 const MAX_AGENT_STEPS = Number(process.env.MAX_AGENT_STEPS || 20);
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || 40);
@@ -56,6 +57,8 @@ export async function runReactLoop(
     const toolResults: unknown[] = [...(state.toolResults || [])];
     let toolCalls = 0;
     const stall: string[] = [];
+    const stats: AgentStats = emptyAgentStats();
+    const loopStarted = started;
 
     sendSSEMessage(state.clientId, {
         type: "react_start",
@@ -64,28 +67,29 @@ export async function runReactLoop(
 
     for (let step = 0; step < maxSteps; step++) {
         if (runtime.abortSignal.aborted || state.abortSignal?.aborted) {
-            return { error: "workflow aborted (eval timeout)", toolResults };
+            return { error: "workflow aborted (eval timeout)", toolResults, agentStats: stats };
         }
         if (Date.now() - started > MAX_RUNTIME_MS) {
-            return { error: `Exceeded MAX_AGENT_RUNTIME_MS of ${MAX_RUNTIME_MS}`, toolResults };
+            return { error: `Exceeded MAX_AGENT_RUNTIME_MS of ${MAX_RUNTIME_MS}`, toolResults, agentStats: stats };
         }
 
+        stats.steps += 1;
         const response = await bound.invoke(messages as never);
         const calls = extractToolCalls(response as { tool_calls?: ToolCall[] });
 
         if (!calls.length) {
             sendSSEMessage(state.clientId, {
                 type: "react_complete",
-                message: `ReAct finished after ${step + 1} step(s)`,
+                message: `ReAct finished after ${stats.steps} step(s)`,
             });
-            return { toolResults, toolsExecuted: true };
+            return { toolResults, toolsExecuted: true, agentStats: stats };
         }
 
         messages.push(response);
 
         for (const call of calls) {
             if (toolCalls >= MAX_TOOL_CALLS) {
-                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true };
+                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true, agentStats: stats };
             }
 
             const signature = `${call.name}:${JSON.stringify(call.args)}`;
@@ -96,6 +100,7 @@ export async function runReactLoop(
                     error: `Agent stalled repeating ${call.name}`,
                     toolResults,
                     toolsExecuted: true,
+                    agentStats: stats,
                 };
             }
 
@@ -123,6 +128,7 @@ export async function runReactLoop(
             }
 
             toolCalls += 1;
+            recordToolUse(stats, call.name, Date.now() - loopStarted);
             toolResults.push({ toolCall: { tool: call.name, args: call.args }, result });
 
             sendSSEMessage(state.clientId, {
@@ -146,5 +152,6 @@ export async function runReactLoop(
         error: `Exceeded MAX_AGENT_STEPS of ${maxSteps}`,
         toolResults,
         toolsExecuted: true,
+        agentStats: stats,
     };
 }

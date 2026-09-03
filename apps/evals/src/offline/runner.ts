@@ -1,40 +1,29 @@
 import fs from "fs";
 import path from "path";
-import type { WorkflowState } from "@control/agent/graphs/workflow";
 import type { EvalCase } from "../dataset";
 import { seedWorkspace } from "./workspace";
 import { extractMetrics, runChecks, type CheckResult, type EvalMetrics } from "../checks";
 import { traceCase } from "@control/observability/langfuse";
 import { judgeCase, type JudgeResult } from "../judge";
+import {
+    type AgentRunResult,
+    type AgentRunStatus,
+    type EvaluationDimensions,
+} from "../agentRun";
+import { diffSnapshots, snapshotWorkspace } from "../workspaceDiff";
+import { evaluationDimensions, runBehaviorChecks, type BehaviorCheck } from "../behavior";
+import type { WorkflowState } from "@control/agent/graphs/workflow";
 
-export type CaseStatus =
-    | "passed_build"
-    | "failed_build"
-    | "workflow_error"
-    | "timeout"
-    | "crashed";
-
-export interface CaseResult {
-    runId: string;
-    caseId: string;
-    tier: string;
-    projectId: string;
-    status: CaseStatus;
-    completed: boolean;
-    buildStatus?: WorkflowState["buildStatus"];
-    fixAttempts?: number;
-    maxFixAttempts?: number;
-    error?: string;
-    durationMs: number;
-    eventsCaptured: number;
-    timestamp: number;
-}
+export type CaseStatus = AgentRunStatus;
+export type CaseResult = AgentRunResult;
 
 export interface RunCaseResult {
-    result: CaseResult;
+    result: AgentRunResult;
     metrics: EvalMetrics;
     checks?: CheckResult;
     judge?: JudgeResult;
+    dimensions: EvaluationDimensions;
+    behavior: BehaviorCheck[];
 }
 
 export interface RunCaseOptions {
@@ -44,22 +33,26 @@ export interface RunCaseOptions {
     maxFixAttempts?: number;
 }
 
-type CaseResultCore = Omit<
-    CaseResult,
-    "status" | "completed" | "buildStatus" | "fixAttempts" | "error"
->;
-
 const TIMEOUT_MARKER = Symbol("eval-timeout");
-
-/**
- * After a timeout we abort the workflow, then wait up to this long for the
- * in-flight node to settle so no orphaned tool call reads the next case's
- * SHARED_DIR/PROJECT_ID.
- */
 const ABORT_GRACE_MS = 5000;
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mapStatus(args: {
+    timedOut: boolean;
+    crashed?: boolean;
+    completed: boolean;
+    error?: string;
+    buildStatus?: string;
+}): AgentRunStatus {
+    if (args.timedOut) return "timeout";
+    if (args.crashed) return "crashed";
+    if (args.completed && !args.error) return "completed";
+    if (args.buildStatus === "errors" || args.buildStatus === "pending") return "build_failed";
+    if (args.error) return "agent_error";
+    return "build_failed";
 }
 
 export async function runCase(
@@ -68,14 +61,19 @@ export async function runCase(
 ): Promise<RunCaseResult> {
     const startedAt = Date.now();
 
-    let result: CaseResult;
+    let result: AgentRunResult;
     let metrics: EvalMetrics;
     let checks: CheckResult | undefined;
     let judge: JudgeResult | undefined;
+    let behavior: BehaviorCheck[] = [];
 
     try {
-        const workspace = await seedWorkspace(options.runDir, evalCase.id);
+        const workspace = await seedWorkspace(options.runDir, evalCase.id, {
+            fixture: evalCase.fixture,
+        });
         process.env.SHARED_DIR = workspace.sharedDir;
+
+        const beforeSnap = await snapshotWorkspace(workspace.projectDir);
 
         const { getMemoryEvents, flushEventSink, resetEventSink } = await import(
             "@control/events/sink"
@@ -84,18 +82,6 @@ export async function runCase(
 
         const abortController = new AbortController();
 
-        const state: WorkflowState = {
-            projectId: workspace.projectId,
-            prompt: evalCase.prompt,
-            clientId: workspace.projectId,
-            fixAttempts: 0,
-            maxFixAttempts: options.maxFixAttempts,
-            abortSignal: abortController.signal,
-            completed: false,
-            messages: [],
-            threadId: workspace.projectId,
-        };
-
         const workflowPromise = traceCase(
             {
                 runId: options.runId,
@@ -103,7 +89,18 @@ export async function runCase(
                 tier: evalCase.tier,
                 prompt: evalCase.prompt,
             },
-            async () => executeMainFlow(state),
+            async () =>
+                executeMainFlow({
+                    projectId: workspace.projectId,
+                    prompt: evalCase.prompt,
+                    clientId: workspace.projectId,
+                    fixAttempts: 0,
+                    maxFixAttempts: options.maxFixAttempts,
+                    abortSignal: abortController.signal,
+                    completed: false,
+                    messages: [],
+                    threadId: workspace.projectId,
+                }),
         ).catch((err: unknown): never => {
             throw err instanceof Error ? err : new Error(String(err));
         });
@@ -115,10 +112,11 @@ export async function runCase(
             ),
         ]);
 
+        const afterSnap = await snapshotWorkspace(workspace.projectDir);
+        const workspaceDiff = diffSnapshots(beforeSnap, afterSnap);
+
         if (raced.kind === TIMEOUT_MARKER) {
             abortController.abort();
-            // Let the orphaned workflow settle before runCase returns, so a
-            // still-running tool call cannot read the next case's workspace.
             await Promise.race([
                 workflowPromise.then(
                     () => undefined,
@@ -126,33 +124,66 @@ export async function runCase(
                 ),
                 delay(ABORT_GRACE_MS),
             ]);
-            result = {
-                ...core(evalCase, options, workspace.projectId, startedAt),
+            result = baseResult(evalCase, options, workspace.projectId, startedAt, {
                 status: "timeout",
                 completed: false,
                 error: `Exceeded ${options.timeoutMs}ms budget`,
                 eventsCaptured: getMemoryEvents().length,
-            };
-            metrics = extractMetrics({ completed: false, fixAttempts: 0 } as WorkflowState, Date.now() - startedAt);
+                workspaceDiff,
+            });
+            metrics = extractMetrics(result);
         } else {
             const final = raced.final as WorkflowState;
-            const buildOk = final.completed === true && !final.error;
-            result = {
-                ...core(evalCase, options, workspace.projectId, startedAt),
-                status: buildOk
-                    ? "passed_build"
-                    : final.error
-                      ? "workflow_error"
-                      : "failed_build",
-                completed: final.completed ?? false,
+            const stats = final.agentStats ?? emptyAgentStats();
+            const status = mapStatus({
+                timedOut: false,
+                completed: final.completed === true && !final.error,
+                error: final.error,
                 buildStatus: final.buildStatus,
-                fixAttempts: final.fixAttempts,
+            });
+            const cs = final.changeSummary;
+            result = baseResult(evalCase, options, workspace.projectId, startedAt, {
+                status,
+                completed: status === "completed",
                 error: final.error,
                 eventsCaptured: getMemoryEvents().length,
-            };
-            metrics = extractMetrics(final, Date.now() - startedAt);
+                workspaceDiff,
+                build: {
+                    status:
+                        final.buildStatus === "success" || final.buildStatus === "tested"
+                            ? "passed"
+                            : final.buildStatus === "errors"
+                              ? "failed"
+                              : "not_run",
+                    diagnostics: final.buildOutput?.slice(0, 4000),
+                },
+                repair: {
+                    attempts: final.fixAttempts,
+                    maxAttempts: options.maxFixAttempts ?? final.maxFixAttempts ?? 0,
+                },
+                agent: {
+                    steps: stats.steps,
+                    toolCalls: stats.toolCalls,
+                    durationMs: Date.now() - startedAt,
+                },
+                files: {
+                    created: cs?.filesCreated.length ?? workspaceDiff.created.length,
+                    modified: cs?.filesModified.length ?? workspaceDiff.modified.length,
+                    deleted: cs?.filesDeleted.length ?? workspaceDiff.deleted.length,
+                },
+                dependenciesAdded: cs?.dependenciesAdded.length ?? 0,
+                react: {
+                    toolCallsByTool: stats.toolCallsByTool,
+                    readOps: stats.readOps,
+                    mutationOps: stats.mutationOps,
+                    buildCount: stats.buildCount,
+                    timeToFirstToolMs: stats.timeToFirstToolMs,
+                    stitchInvoked: stats.stitchInvoked,
+                },
+            });
+            metrics = extractMetrics(result);
 
-            if (buildOk) {
+            if (status === "completed") {
                 checks = await runChecks(workspace.projectDir, evalCase.expectedFeatures);
                 if (checks.passed) {
                     const { model } = await import("@control/agent/client");
@@ -168,17 +199,18 @@ export async function runCase(
             }
         }
 
+        behavior = runBehaviorChecks(result);
         await flushEventSink();
         resetEventSink();
     } catch (err) {
-        result = {
-            ...core(evalCase, options, "", startedAt),
+        result = baseResult(evalCase, options, "", startedAt, {
             status: "crashed",
             completed: false,
             error: err instanceof Error ? err.message : String(err),
             eventsCaptured: 0,
-        };
-        metrics = extractMetrics({ completed: false, fixAttempts: 0 } as WorkflowState, Date.now() - startedAt);
+        });
+        metrics = extractMetrics(result);
+        behavior = runBehaviorChecks(result);
         try {
             const { flushEventSink, resetEventSink } = await import("@control/events/sink");
             await flushEventSink();
@@ -189,28 +221,38 @@ export async function runCase(
     }
 
     await writeResultAtomically(options.runDir, result);
-    return { result, metrics, checks, judge };
+    const dimensions = evaluationDimensions(
+        result,
+        checks?.passed,
+        judge?.valid,
+        Boolean(checks),
+        Boolean(judge),
+    );
+    return { result, metrics, checks, judge, dimensions, behavior };
 }
 
-function core(
+function baseResult(
     evalCase: EvalCase,
     options: RunCaseOptions,
     projectId: string,
     startedAt: number,
-): CaseResultCore {
+    extra: Partial<AgentRunResult> & Pick<AgentRunResult, "status" | "completed">,
+): AgentRunResult {
     return {
         runId: options.runId,
         caseId: evalCase.id,
-        tier: evalCase.tier,
         projectId,
-        durationMs: Date.now() - startedAt,
-        eventsCaptured: 0,
+        tier: evalCase.tier,
         timestamp: startedAt,
+        durationMs: Date.now() - startedAt,
+        eventsCaptured: extra.eventsCaptured ?? 0,
         maxFixAttempts: options.maxFixAttempts,
+        dependenciesAdded: extra.dependenciesAdded ?? 0,
+        ...extra,
     };
 }
 
-async function writeResultAtomically(runDir: string, result: CaseResult): Promise<void> {
+async function writeResultAtomically(runDir: string, result: AgentRunResult): Promise<void> {
     const resultsDir = path.join(runDir, "results");
     await fs.promises.mkdir(resultsDir, { recursive: true });
 

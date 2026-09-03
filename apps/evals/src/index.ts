@@ -23,6 +23,7 @@ interface CliArgs {
     before?: string;
     after?: string;
     gate?: string;
+    saveBaseline?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -51,6 +52,9 @@ function parseArgs(argv: string[]): CliArgs {
                 break;
             case "--gate":
                 args.gate = argv[++i];
+                break;
+            case "--save-baseline":
+                args.saveBaseline = argv[++i];
                 break;
             case "--before":
                 args.before = argv[++i];
@@ -154,6 +158,7 @@ async function main() {
         timeoutMsPerCase: args.timeoutMs,
         bunVersion: Bun.version,
         platform: `${process.platform}-${process.arch}`,
+        agentContract: "new-react",
         cases: cases.map((c) => ({ id: c.id, tier: c.tier, prompt: c.prompt })),
     };
     await fs.promises.writeFile(
@@ -194,6 +199,11 @@ async function main() {
         await writeScoreBoard(runDir, runId, scores);
 
         await writeReport(runDir, report);
+        const { deriveRunMetrics } = await import("./behavior");
+        const derived = deriveRunMetrics(evaluated.map((e) => e.result));
+        console.log(
+            `  ReAct: tools/success=${derived.toolCallsPerSuccess.toFixed(1)} builds/case=${derived.buildsPerCase.toFixed(1)} repairRate=${(derived.repairRate * 100).toFixed(0)}%`,
+        );
     }
 
     // SIGINT/SIGTERM: flush events, write a partial report, then exit cleanly.
@@ -225,15 +235,15 @@ async function main() {
     try {
         for (const c of cases) {
             process.stdout.write(`▶ ${c.id} ... `);
-            const { result, metrics, checks, judge } = await runCase(c, {
+            const { result, metrics, checks, judge, dimensions, behavior } = await runCase(c, {
                 runId,
                 runDir,
                 timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
                 maxFixAttempts: c.maxFixAttempts,
             });
-            evaluated.push({ result, metrics, checks, judge });
+            evaluated.push({ result, metrics, checks, judge, dimensions, behavior });
 
-            const icon = result.status === "passed_build" ? "✔" : "✘";
+            const icon = result.status === "completed" ? "✔" : "✘";
             const checkStr = checks
                 ? ` [${checks.score}/${checks.total}]`
                 : "";
@@ -269,7 +279,7 @@ async function main() {
         }
     }
 
-    const passed = evaluated.filter((c) => c.result.status === "passed_build").length;
+    const passed = evaluated.filter((c) => c.result.status === "completed").length;
     if (passed < evaluated.length) process.exitCode = 1;
 
     // Regression gate (--gate <file>): fails CI if thresholds are breached.
@@ -283,9 +293,15 @@ async function main() {
             throw err;
         }
         const gateCases = toGateCases(scored, tierOf);
-        const gate = evaluateGate(gateCases, thresholds);
+        const gate = evaluateGate(gateCases, thresholds, { expectedCases: cases.length });
         for (const line of renderGate(gate, gateCases)) console.log(line);
         if (!gate.passed) process.exitCode = 1;
+    }
+
+    if (args.saveBaseline) {
+        const baselineDir = path.resolve(import.meta.dir, "..", "baselines", args.saveBaseline);
+        await fs.promises.cp(runDir, baselineDir, { recursive: true });
+        console.log(`Saved baseline: ${baselineDir}`);
     }
 
     // Explicit exit: the OTel/Langfuse exporter and AIRouter keep-alive leave
