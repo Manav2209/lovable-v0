@@ -29,6 +29,7 @@ export type AgentStats = {
     timeToFirstToolMs?: number;
     stitchInvoked: boolean;
     buildCount: number;
+    changedFiles: string[];
 };
 
 export function emptyAgentStats(): AgentStats {
@@ -40,6 +41,7 @@ export function emptyAgentStats(): AgentStats {
         mutationOps: 0,
         stitchInvoked: false,
         buildCount: 0,
+        changedFiles: [],
     };
 }
 
@@ -57,6 +59,7 @@ export function mergeAgentStats(a: AgentStats, b: Partial<AgentStats>): AgentSta
         timeToFirstToolMs: a.timeToFirstToolMs ?? b.timeToFirstToolMs,
         stitchInvoked: a.stitchInvoked || Boolean(b.stitchInvoked),
         buildCount: a.buildCount + (b.buildCount ?? 0),
+        changedFiles: [...a.changedFiles, ...(b.changedFiles ?? [])],
     };
 }
 

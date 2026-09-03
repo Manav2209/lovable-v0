@@ -10,6 +10,8 @@ import { summarizeChangesNode } from "../tool/simple/summarizeChanges";
 import { stitchAppNode } from "../tool/code/stitchApp";
 import { runReactLoop } from "./toolLoop";
 import { emptyAgentStats, mergeAgentStats, type AgentStats } from "../agentStats";
+import { observe } from "../../observability/trace";
+import { getActiveTraceId } from "../../observability/langfuse";
 
 export interface WorkflowState {
     projectId: string;
@@ -55,6 +57,7 @@ export interface WorkflowState {
         summary: string;
     };
     agentStats?: AgentStats;
+    traceId?: string;
 }
 
 const ABORT_ERROR = "workflow aborted (eval timeout)";
@@ -84,7 +87,11 @@ async function finishSuccess(state: WorkflowState): Promise<WorkflowState> {
 }
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
-    let state = { ...initialState, agentStats: initialState.agentStats ?? emptyAgentStats() };
+    let state = {
+        ...initialState,
+        agentStats: initialState.agentStats ?? emptyAgentStats(),
+        traceId: initialState.traceId ?? getActiveTraceId(),
+    };
 
     try {
         sendSSEMessage(state.clientId, {
@@ -92,19 +99,27 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             message: "Starting ReAct agent workflow",
         });
 
-        const promptCheckResult = await userGivenPromptCheckerNode(state);
+        const promptCheckResult = await observe("Security", { metadata: { phase: "security" } }, () =>
+            userGivenPromptCheckerNode(state),
+        );
         state = { ...state, ...promptCheckResult };
         if (state.error) {
             throw new Error(`Prompt validation failed: ${state.error}`);
         }
 
-        const factsResult = await collectWorkspaceFactsNode(state);
+        const factsResult = await observe("TemplateFacts", { metadata: { phase: "template_facts" } }, () =>
+            collectWorkspaceFactsNode(state),
+        );
         state = { ...state, ...factsResult };
         if (state.error) {
             throw new Error(`Failed to collect template facts: ${state.error}`);
         }
 
-        const planResult = await planerNode(state);
+        const planResult = await observe(
+            "Planning",
+            { metadata: { phase: "planning" }, input: { prompt: state.prompt } },
+            () => planerNode(state),
+        );
         state = { ...state, ...planResult };
         if (state.error) {
             throw new Error(`Failed to create plan: ${state.error}`);
@@ -116,7 +131,9 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             return state;
         }
 
-        const reactResult = await runReactLoop(state);
+        const reactResult = await observe("ReAct Agent", { metadata: { phase: "react" } }, () =>
+            runReactLoop(state),
+        );
         state = {
             ...state,
             ...reactResult,
@@ -126,13 +143,35 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             throw new Error(state.error);
         }
 
-        const stitchResult = await stitchAppNode(state);
+        const stitchResult = await observe(
+            "StitchApp",
+            { metadata: { phase: "stitch" } },
+            () => stitchAppNode(state),
+        );
         state = { ...state, ...stitchResult };
         if ((stitchResult.toolResults || []).some((r: { toolCall?: { tool?: string } }) => r.toolCall?.tool === "stitchApp")) {
             state.agentStats = mergeAgentStats(state.agentStats ?? emptyAgentStats(), { stitchInvoked: true });
         }
 
-        const validateResult = await validateNode(state);
+        const buildStarted = Date.now();
+        const validateResult = await observe(
+            "Build",
+            {
+                metadata: { phase: "build", command: "bun run build" },
+            },
+            () => validateNode(state),
+            (result) => {
+                const res = result as Record<string, unknown> | undefined;
+                const buildStatus = (res?.buildStatus as string) ?? "unknown";
+                const errors = (res?.buildErrors ?? []) as Array<{ type?: string; message?: string }>;
+                return {
+                    buildStatus,
+                    durationMs: Date.now() - buildStarted,
+                    diagnosticCategory: errors[0]?.type ?? "none",
+                    errorCount: errors.length,
+                };
+            },
+        );
         state = {
             ...state,
             ...validateResult,
@@ -159,22 +198,51 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
                 state.buildOutput ? `Build output:\n${state.buildOutput.slice(0, 8000)}` : "",
             ].join("\n\n");
 
-            const repair = await runReactLoop(state, diagnostics, MAX_REPAIR_STEPS);
-            state = {
-                ...state,
-                ...repair,
-                error: undefined,
-                agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), repair.agentStats ?? {}),
-            };
-
-            if (state.error) break;
-
-            const revalidate = await validateNode(state);
-            state = {
-                ...state,
-                ...revalidate,
-                agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), { buildCount: 1 }),
-            };
+            const attempt = state.fixAttempts;
+            await observe(
+                `Repair ${attempt}`,
+                {
+                    metadata: {
+                        phase: "repair",
+                        attempt,
+                        diagnosticCategory: state.buildErrors?.[0]?.type ?? "unknown",
+                    },
+                    input: { diagnostics: state.buildOutput?.slice(0, 2000) },
+                },
+                async () => {
+                    const repair = await runReactLoop(state, diagnostics, MAX_REPAIR_STEPS);
+                    state = {
+                        ...state,
+                        ...repair,
+                        error: undefined,
+                        agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), repair.agentStats ?? {}),
+                    };
+                    if (state.error) return repair;
+                    const revalidateStarted = Date.now();
+                    const revalidate = await observe(
+                        "Build",
+                        { metadata: { phase: "build", command: "bun run build", repairAttempt: attempt } },
+                        () => validateNode(state),
+                        (result) => {
+                            const res = result as Record<string, unknown> | undefined;
+                            const bs = (res?.buildStatus as string) ?? "unknown";
+                            const errs = (res?.buildErrors ?? []) as Array<{ type?: string }>;
+                            return {
+                                buildStatus: bs,
+                                durationMs: Date.now() - revalidateStarted,
+                                diagnosticCategory: errs[0]?.type ?? "none",
+                                errorCount: errs.length,
+                            };
+                        },
+                    );
+                    state = {
+                        ...state,
+                        ...revalidate,
+                        agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), { buildCount: 1 }),
+                    };
+                    return revalidate;
+                },
+            );
         }
 
         if (isAborted(state)) {
@@ -184,7 +252,22 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         }
 
         if (state.buildStatus === "success") {
-            return await finishSuccess(state);
+            const finished = await finishSuccess(state);
+            await observe(
+                "Final Result",
+                {
+                    metadata: {
+                        phase: "final",
+                        executionStatus: finished.completed ? "completed" : "failed",
+                        buildStatus: finished.buildStatus,
+                        repairAttempts: finished.fixAttempts,
+                        agentSteps: finished.agentStats?.steps,
+                        toolCalls: finished.agentStats?.toolCalls,
+                    },
+                },
+                async () => finished,
+            );
+            return finished;
         }
 
         if (!state.error) {
@@ -200,6 +283,21 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         }
 
         state.completed = false;
+        await observe(
+            "Final Result",
+            {
+                metadata: {
+                    phase: "final",
+                    executionStatus: "failed",
+                    buildStatus: state.buildStatus,
+                    error: state.error,
+                    repairAttempts: state.fixAttempts,
+                    agentSteps: state.agentStats?.steps,
+                    toolCalls: state.agentStats?.toolCalls,
+                },
+            },
+            async () => state,
+        );
         return state;
     } catch (error) {
         console.error("Workflow execution error:", error);
@@ -217,6 +315,21 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             const summaryResult = await summarizeChangesNode(state);
             state = { ...state, ...summaryResult };
         }
+
+        await observe(
+            "Final Result",
+            {
+                metadata: {
+                    phase: "final",
+                    executionStatus: "crashed",
+                    error: state.error,
+                    repairAttempts: state.fixAttempts,
+                    agentSteps: state.agentStats?.steps,
+                    toolCalls: state.agentStats?.toolCalls,
+                },
+            },
+            async () => state,
+        );
 
         return state;
     }
