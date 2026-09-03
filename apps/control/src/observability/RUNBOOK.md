@@ -4,7 +4,7 @@ Every agent run (eval case or user prompt) should produce one Langfuse trace whe
 
 ## What a trace contains
 
-- Phases: Security → TemplateFacts → Planning → ReAct Agent → StitchApp → Build → Repair (if any) → Final Result
+- Phases: Security → TemplateFacts → Planning → ReAct Agent → Build → Repair (if any) → Final Result
 - Each ReAct step: model call, latency, token usage, tool name, sanitized args/result, changedFiles
 - Retrieval tools (listDir, grepSearch, readFile) are nested under a parent "Retrieval" span
 - Build: status, duration, diagnosticCategory, error count
@@ -34,7 +34,6 @@ Filter by observation name to isolate specific phases:
 - `"Build"` — all build attempts (initial + post-repair)
 - `"Repair N"` — individual repair attempts
 - `"ReAct Step N"` — individual reasoning steps
-- `"StitchApp"` — template stitching
 
 ### Token usage
 Each ReAct Step observation includes `promptTokens`, `completionTokens`, and `totalTokens` in its metadata. Sum across steps for total usage per run.

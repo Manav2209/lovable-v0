@@ -143,11 +143,7 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
             throw new Error(state.error);
         }
 
-        const stitchResult = await observe(
-            "StitchApp",
-            { metadata: { phase: "stitch" } },
-            () => stitchAppNode(state),
-        );
+        const stitchResult = await stitchAppNode(state);
         state = { ...state, ...stitchResult };
         if ((stitchResult.toolResults || []).some((r: { toolCall?: { tool?: string } }) => r.toolCall?.tool === "stitchApp")) {
             state.agentStats = mergeAgentStats(state.agentStats ?? emptyAgentStats(), { stitchInvoked: true });
