@@ -26,6 +26,7 @@ import type {
     ServingMessage,
 } from "./types";
 import { createProjectPod, registerHostIngressRoute } from "./handler/project";
+import { CorrelationResolver, idKey } from "./correlation";
 import {
     RedisManager,
     publishEnvelope,
@@ -40,46 +41,10 @@ console.log("Orchestrator started with env:", {
     SKIP_K8S: process.env.SKIP_K8S || "true",
 });
 
-const serverResponses = new Map<string, (v: ServingMessage) => void>();
-const controlResponses = new Map<string, (v: ControlMessage) => void>();
+const serverResolver = new CorrelationResolver<ServingMessage>();
+const controlResolver = new CorrelationResolver<ControlMessage>();
 /** Initial create prompts to run automatically after PROJECT_CREATED */
 const pendingInitialPrompts = new Map<string, string>();
-
-/**
- * Correlation key for a request/response pair (spec-06 §1). Prefer the
- * globally-unique jobId so concurrent operations for the same project don't
- * collide; fall back to projectId only for callers that never had a jobId.
- */
-function idKey(projectId: string, jobId?: string): string {
-    return jobId && jobId.length > 0 ? jobId : projectId;
-}
-
-function waitForServer(jobId: string, timeoutMs = 600_000) {
-    return new Promise<ServingMessage>((resolve, reject) => {
-        const timer = setTimeout(() => {
-            serverResponses.delete(jobId);
-            reject(new Error(`Serving pod timeout for ${jobId}`));
-        }, timeoutMs);
-        serverResponses.set(jobId, (value) => {
-            clearTimeout(timer);
-            resolve(value);
-        });
-    });
-}
-
-function waitForControl(jobId: string, timeoutMs = 600_000) {
-    return new Promise<ControlMessage>((resolve, reject) => {
-        const timer = setTimeout(() => {
-            controlResponses.delete(jobId);
-            reject(new Error("Control pod timeout"));
-        }, timeoutMs);
-
-        controlResponses.set(jobId, (value) => {
-            clearTimeout(timer);
-            resolve(value);
-        });
-    });
-}
 
 async function ListenBackend() {
     await readGroupLoop({
@@ -165,16 +130,13 @@ async function ListenControlPod() {
 
             if (type !== PROJECT_INITIALIZED) {
                 const key = idKey(projectId, data.jobId as string | undefined);
-                const resolver = controlResponses.get(key);
-                if (resolver) {
-                    resolver(data);
-                    controlResponses.delete(key);
-                } else if (
+                const matched = controlResolver.resolve(key, data);
+                if (!matched && (
                     type === PROJECT_BUILD_SUCCESS ||
                     type === PROJECT_BUILD_FAILED ||
                     type === PROJECT_FAILED ||
                     type === PROMPT_RESPONSE
-                ) {
+                )) {
                     // Late reply after HTTP waiter timed out — still notify backend.
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
@@ -215,11 +177,8 @@ async function ListenServingPod() {
             ];
             if (validRunTypes.includes(type)) {
                 const key = idKey(projectId, data.jobId as string | undefined);
-                const resolver = serverResponses.get(key);
-                if (resolver) {
-                    resolver(data);
-                    serverResponses.delete(key);
-                } else {
+                const matched = serverResolver.resolve(key, data);
+                if (!matched) {
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
                         jobId: data.jobId as string | undefined,
@@ -330,7 +289,7 @@ async function buildProject(projectId: string, jobId?: string) {
     const key = idKey(projectId, jobId);
 
     try {
-        const response = await waitForControl(key);
+        const response = await controlResolver.wait(key, 600_000, "Control pod");
         if (response.type === PROJECT_BUILD_SUCCESS) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
@@ -377,7 +336,7 @@ async function runProject(projectId: string, jobId?: string) {
     const key = idKey(projectId, jobId);
 
     try {
-        const response = await waitForServer(key);
+        const response = await serverResolver.wait(key, 600_000, "Serving pod");
         if (response.type === PROJECT_RUN_SUCCESS) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
@@ -423,7 +382,11 @@ async function handlePrompt(projectId: string, jobId: string | undefined, prompt
     });
 
     try {
-        const response = await waitForControl(idKey(projectId, jobId));
+        const response = await controlResolver.wait(
+            idKey(projectId, jobId),
+            600_000,
+            "Control pod",
+        );
         if (response.type === PROMPT_RESPONSE) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
