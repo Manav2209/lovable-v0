@@ -7,6 +7,7 @@ import { traceAgentRun } from "../../observability/langfuse";
 
 export async function processPrompt(
   projectId: string,
+  jobId: string | undefined,
   prompt: string,
 ): Promise<void> {
   console.log(`Starting agent processing for project ${projectId}: ${prompt}`);
@@ -25,6 +26,7 @@ export async function processPrompt(
       data: JSON.stringify({
           projectId: projectId,
           type: PROMPT_RESPONSE,
+          jobId,
           payload: getProjectSSEUrl(clientIdUsed)
       })
     }, { projectId });

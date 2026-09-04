@@ -28,6 +28,77 @@ function resolvePodRedisUrl(): string {
     );
 }
 
+/** Shared Secret name holding cloud credentials injected into project pods. */
+const SECRET_NAME = "lovable-project-credentials";
+
+/** Keys from host env that should be sourced from the K8s Secret, not inlined. */
+const SECRET_KEYS = [
+    "ACCESS_KEY_ID",
+    "SECRET_ACCESS_KEY",
+    "GROQ_API_KEY",
+    "AIROUTER_API_KEY",
+] as const;
+
+/**
+ * Ensure a K8s Secret holding cloud credentials exists before the Deployment is
+ * created, so env vars can be injected via secretKeyRef instead of inline
+ * plaintext (spec-05 §4). Values are read from host env; guarded behind the
+ * non-SKIP_K8S path by the caller.
+ */
+async function ensureCredentialsSecret(): Promise<void> {
+    const data: Record<string, string> = {};
+    for (const key of SECRET_KEYS) {
+        const value = process.env[key] || "";
+        if (value) {
+            data[key] = Buffer.from(value, "utf8").toString("base64");
+        }
+    }
+
+    const secret: k8s.V1Secret = {
+        apiVersion: "v1",
+        kind: "Secret",
+        metadata: {
+            name: SECRET_NAME,
+            labels: { app: "lovable-project" },
+        },
+        type: "Opaque",
+        data,
+    };
+
+    try {
+        await coreApi.createNamespacedSecret({
+            namespace: NAMESPACE,
+            body: secret,
+        });
+        console.log(`[k8s] Created Secret ${SECRET_NAME}`);
+    } catch (e: unknown) {
+        const status = (e as { response?: { statusCode?: number } })?.response
+            ?.statusCode;
+        if (status === 409) {
+            const existing = await coreApi.readNamespacedSecret({
+                name: SECRET_NAME,
+                namespace: NAMESPACE,
+            });
+            if (JSON.stringify(existing.data) !== JSON.stringify(data)) {
+                await coreApi.replaceNamespacedSecret({
+                    name: SECRET_NAME,
+                    namespace: NAMESPACE,
+                    body: {
+                        ...existing,
+                        data: {
+                            ...existing.data,
+                            ...data,
+                        },
+                    },
+                });
+                console.log(`[k8s] Updated Secret ${SECRET_NAME}`);
+            }
+            return;
+        }
+        throw e;
+    }
+}
+
 async function waitForDeploymentReady(
     name: string,
     timeoutMs = 120_000,
@@ -199,6 +270,8 @@ export async function createProjectPod(projectId: string) {
     const previewUrl = buildPreviewUrl({ projectId });
     const podRedisUrl = resolvePodRedisUrl();
 
+    await ensureCredentialsSecret();
+
     // Create NodePort first so host ingress can reach the preview via localhost.
     const httpNodePort = await ensureNodePortService(name, projectId);
     const hostUpstream = `http://127.0.0.1:${httpNodePort}`;
@@ -215,14 +288,14 @@ export async function createProjectPod(projectId: string) {
         },
         { name: "BUCKET_NAME", value: process.env.BUCKET_NAME || "lovable" },
         { name: "S3_API", value: process.env.S3_API || "" },
-        { name: "ACCESS_KEY_ID", value: process.env.ACCESS_KEY_ID || "" },
-        { name: "SECRET_ACCESS_KEY", value: process.env.SECRET_ACCESS_KEY || "" },
-        { name: "GROQ_API_KEY", value: process.env.GROQ_API_KEY || "" },
+        { name: "ACCESS_KEY_ID", valueFrom: { secretKeyRef: { name: SECRET_NAME, key: "ACCESS_KEY_ID" } } },
+        { name: "SECRET_ACCESS_KEY", valueFrom: { secretKeyRef: { name: SECRET_NAME, key: "SECRET_ACCESS_KEY" } } },
+        { name: "GROQ_API_KEY", valueFrom: { secretKeyRef: { name: SECRET_NAME, key: "GROQ_API_KEY" } } },
         { name: "GROQ_MODEL", value: process.env.GROQ_MODEL || "" },
         { name: "LLM_PROVIDER", value: process.env.LLM_PROVIDER || "" },
         {
             name: "AIROUTER_API_KEY",
-            value: process.env.AIROUTER_API_KEY || "",
+            valueFrom: { secretKeyRef: { name: SECRET_NAME, key: "AIROUTER_API_KEY" } },
         },
         {
             name: "AIROUTER_BASE_URL",
@@ -245,7 +318,7 @@ export async function createProjectPod(projectId: string) {
         { name: "PREVIEW_UPSTREAM", value: hostUpstream },
         { name: "INGRESS_ADMIN_URL", value: INGRESS_ADMIN_URL },
         { name: "PREVIEW_URL", value: previewUrl },
-    ].filter((env) => env.value !== "");
+    ].filter((env) => "valueFrom" in env || (env.value !== undefined && env.value !== ""));
 
     const deployment: k8s.V1Deployment = {
         apiVersion: "apps/v1",

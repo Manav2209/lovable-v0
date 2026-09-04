@@ -162,7 +162,7 @@ function identifyRequiredTools(prompt: string): string[] {
     lowerPrompt.includes("dependency") ||
     lowerPrompt.includes("package")
   ) {
-    tools.push("addDependency", "executeCommand");
+    tools.push("addDependency");
   }
   if (
     lowerPrompt.includes("build") ||

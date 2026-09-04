@@ -24,7 +24,7 @@ export const SYSTEM_PROMPTS = {
 - grepSearch: { pattern: string, globPattern?: string, searchPath?: string } - Search for regex patterns in code
 
 **Command Execution:**
-- executeCommand: { command: string, cwd?: string } - Run shell commands
+- Shell command execution is DISABLED for safety. Use file/source tools (createFile, updateFile, replaceInFile, addDependency, addShadcnComponent) instead.
 
 **Dependencies:**
 - addDependency: { packages: string[], cwd?: string } - Install NEW packages
@@ -292,7 +292,7 @@ export const SYSTEM_PROMPTS = {
 - grepSearch: { pattern: string, globPattern?: string, searchPath?: string } - Search code with regex patterns
 
 **Command Execution:**
-- executeCommand: { command: string, cwd?: string } - Run shell commands
+- Shell command execution is DISABLED for safety. Use file/source tools (createFile, updateFile, replaceInFile, addDependency, addShadcnComponent) instead.
 
 **Dependencies:**
 - addDependency: { packages: string[], cwd?: string } - Install NEW packages
@@ -376,7 +376,7 @@ export const SYSTEM_PROMPTS = {
   - \`writeMultipleFile\`: Creates or updates multiple files. Input: { files: [{ path: string, data: string }] }
   
   ### Command Execution
-  - \`executeCommand\`: Executes a shell command. Input: { command: string, cwd?: string }
+  - Shell command execution is DISABLED for safety. Use file/source tools instead.
   
   ### Dependencies
   - \`addDependency\`: Adds npm dependencies using bun. Input: { packages: string[], cwd?: string }

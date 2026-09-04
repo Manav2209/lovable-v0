@@ -27,19 +27,14 @@ function toSseConnectUrl(sseUrl: string, projectId: string): string {
     if (!url.searchParams.get("id")) {
       url.searchParams.set("id", projectId);
     }
-    const token = getToken();
-    if (token && !url.searchParams.get("token")) {
-      url.searchParams.set("token", token);
+    // The SSE URL must already carry a short-lived ticket (spec-05 §5);
+    // never append the raw JWT to the query string.
+    if (!url.searchParams.get("token")) {
+      throw new Error("SSE URL missing ticket token");
     }
     return url.toString();
   } catch {
-    const token = getToken();
-    const withId = sseUrl.includes("?")
-      ? `${sseUrl}&id=${projectId}`
-      : `${sseUrl}?id=${projectId}`;
-    return token && !withId.includes("token=")
-      ? `${withId}&token=${encodeURIComponent(token)}`
-      : withId;
+    return sseUrl;
   }
 }
 
@@ -88,9 +83,18 @@ export function WorkspacePage() {
     if (!projectId || loading) return;
     const token = getToken();
     if (!token) return;
-    attachSse(
-      `/api/v1/project/${projectId}/events?token=${encodeURIComponent(token)}`,
-    );
+    api
+      .getSseTicket(projectId)
+      .then((res) => {
+        const ticket = res.data?.ticket;
+        if (!ticket) return;
+        attachSse(
+          `/api/v1/project/${projectId}/events?token=${encodeURIComponent(ticket)}`,
+        );
+      })
+      .catch(() => {
+        // Ticket minting requires an authenticated session; fail silently here.
+      });
     return () => {
       esRef.current?.close();
     };

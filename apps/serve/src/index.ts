@@ -80,7 +80,7 @@ async function registerPreview(projectId: string, upstream: string) {
     }
 }
 
-async function handleRunProject(projectId: string) {
+async function handleRunProject(projectId: string, jobId?: string) {
     try {
         console.log(`[${projectId}] Attempting to serve project`);
         if (!checkIfProjectFilesExist(projectId)) {
@@ -102,6 +102,7 @@ async function handleRunProject(projectId: string) {
         await publishEnvelope(ServingToOrchestrator, {
             type: PROJECT_RUN_SUCCESS,
             projectId,
+            jobId,
             payload: previewUrl,
         });
         console.log(
@@ -129,6 +130,7 @@ async function handleRunProject(projectId: string) {
         await publishEnvelope(ServingToOrchestrator, {
             type: PROJECT_RUN_FAILED,
             projectId,
+            jobId,
             payload: errorMessage,
         });
         console.log(`[${projectId}] Sent PROJECT_RUN_FAILED to orchestrator`);
@@ -150,6 +152,7 @@ async function ListenControl() {
             const msgFromControl = parseStreamFields(fields);
             const projectId = msgFromControl.projectId as string | undefined;
             const type = msgFromControl.type;
+            const jobId = msgFromControl.jobId as string | undefined;
 
             if (!projectId) {
                 console.warn("Control message missing projectId");
@@ -181,11 +184,13 @@ async function ListenControl() {
                             type: PROJECT_INITIALIZED,
                             success: "true",
                             projectId,
+                            jobId,
                         });
 
                         await publishEnvelope(ServingToOrchestrator, {
                             type: PROJECT_CREATED,
                             projectId,
+                            jobId,
                             success: "true",
                         });
                         console.log(
@@ -202,18 +207,20 @@ async function ListenControl() {
                             success: "false",
                             payload: errorMessage,
                             projectId,
+                            jobId,
                         });
 
                         await publishEnvelope(ServingToOrchestrator, {
                             type: PROJECT_FAILED,
                             projectId,
+                            jobId,
                             payload: errorMessage,
                         });
                     }
                     break;
 
                 case PROJECT_RUN:
-                    await handleRunProject(projectId);
+                    await handleRunProject(projectId, jobId);
                     break;
 
                 default:
@@ -238,6 +245,7 @@ async function ListenOrchestator() {
         handler: async (_id, fields) => {
             const msgFromOrch = parseStreamFields(fields);
             const { projectId, type } = msgFromOrch;
+            const jobId = msgFromOrch.jobId as string | undefined;
 
             if (!projectId) {
                 console.warn("Orchestrator message missing projectId");
@@ -254,7 +262,7 @@ async function ListenOrchestator() {
 
             switch (type) {
                 case PROJECT_RUN:
-                    await handleRunProject(projectId as string);
+                    await handleRunProject(projectId as string, jobId);
                     break;
                 default:
                     console.log(

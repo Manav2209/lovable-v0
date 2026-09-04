@@ -9,7 +9,8 @@ import { ControlToOrchestrator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_
 import type { WorkflowState } from "../../graphs/workflow";
 
 export const buildProjectAndNotifyToRun = async (
-  projectId: string
+  projectId: string,
+  jobId?: string
 ) => {
   const sharedDir = process.env.SHARED_DIR || "/app/shared";
 
@@ -23,6 +24,7 @@ export const buildProjectAndNotifyToRun = async (
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
+        jobId,
         error: "Invalid project directory",
       }),
     })
@@ -36,6 +38,7 @@ export const buildProjectAndNotifyToRun = async (
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
+        jobId,
         error: "Project directory not found",
       }),
     })
@@ -50,6 +53,7 @@ export const buildProjectAndNotifyToRun = async (
       data: JSON.stringify({
         key: PROJECT_FAILED,
         projectId,
+        jobId,
         error: "package.json not found",
       }),
     })
@@ -73,6 +77,7 @@ export const buildProjectAndNotifyToRun = async (
         data: JSON.stringify({
           key: PROJECT_FAILED,
           projectId,
+          jobId,
           error: `Failed to install dependencies: ${installStderr}`,
         }),
       })
@@ -92,6 +97,7 @@ export const buildProjectAndNotifyToRun = async (
         data: JSON.stringify({
           key: PROJECT_BUILD_FAILED,
           projectId,
+          jobId,
           error: `Failed to build project: ${buildStderr}`,
         }),
       })
@@ -110,6 +116,7 @@ export const buildProjectAndNotifyToRun = async (
       data: JSON.stringify({
         key: PROJECT_BUILD_FAILED,
         projectId,
+        jobId,
         error: `Build error: ${error instanceof Error ? error.message : String(error)}`,
       }),
     })

@@ -17,10 +17,12 @@ export type ControlMessage = {
     projectId: string;
     type: string;
     payload?: string;
+    jobId?: string;
 };
 
 export type ServingMessage = {
     projectId: string;
     type: string;
     payload?: string;
+    jobId?: string;
 };
