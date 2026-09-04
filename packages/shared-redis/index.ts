@@ -48,6 +48,22 @@ type ReadGroupLoopOptions = {
     backoffMs?: number;
     /** Stream ID to start from when creating the group. Default "$" (new messages only). */
     startId?: "$" | "0";
+    /**
+     * Max delivery attempts before a message is routed to the dead-letter
+     * stream (spec-06 §2). Default 3.
+     */
+    maxDeliveries?: number;
+    /**
+     * Min idle time (ms) before a pending message is reclaimed for redelivery
+     * via XAUTOCLAIM (spec-06 §2). Default 10000.
+     */
+    claimIdleMs?: number;
+    /**
+     * How often (ms) to run the stale-pending reclaim sweep. Default 5000.
+     */
+    claimIntervalMs?: number;
+    /** Dead-letter stream; defaults to `${stream}:dead`. */
+    deadLetterStream?: string;
 };
 
 export class RedisManager {
@@ -227,15 +243,123 @@ export async function readGroupLoop(
         count = 10,
         backoffMs = 1000,
         startId = "$",
+        maxDeliveries = 3,
+        claimIdleMs = 10_000,
+        claimIntervalMs = 5_000,
+        deadLetterStream = `${stream}:dead`,
     } = options;
     const consumer = options.consumer ?? defaultConsumerName(group);
+
+    const deliveriesKey = `stream:${stream}:deliveries`;
 
     await ensureConsumerGroup(stream, group, startId);
     const reader = await RedisManager.getReader(readerRole);
 
     console.log(
-        `[Redis] Listening on ${stream} as group=${group} consumer=${consumer}`,
+        `[Redis] Listening on ${stream} as group=${group} consumer=${consumer} (maxDeliveries=${maxDeliveries})`,
     );
+
+    async function deliveryCount(msgId: string): Promise<number> {
+        const v = await reader.hIncrBy(deliveriesKey, msgId, 1);
+        return v;
+    }
+
+    async function clearDelivery(msgId: string): Promise<void> {
+        await reader.hDel(deliveriesKey, msgId);
+    }
+
+    async function deadLetter(
+        msgId: string,
+        fields: StreamFields,
+        attempts: number,
+    ): Promise<void> {
+        try {
+            await reader.xAdd(deadLetterStream, "*", {
+                ...fields,
+                data: fields.data
+                    ? `${String(fields.data).slice(0, 2000)}`
+                    : "",
+                _originalId: msgId,
+                _deadLetterAt: Date.now().toString(),
+                _attempts: String(attempts),
+            });
+            console.warn(
+                `[Redis] ${stream} id=${msgId} exceeded ${maxDeliveries} deliveries; moved to ${deadLetterStream}`,
+            );
+        } catch (err) {
+            console.error(
+                `[Redis] Failed writing dead-letter for ${stream} id=${msgId}:`,
+                err,
+            );
+        }
+    }
+
+    async function handleMessage(msgId: string, fields: StreamFields) {
+        try {
+            await handler(msgId, fields);
+            await reader.xAck(stream, group, msgId);
+        } catch (err) {
+            const attempts = await deliveryCount(msgId);
+            console.error(
+                `[Redis] Handler failed for ${stream} id=${msgId} (attempt ${attempts}):`,
+                err,
+            );
+            if (attempts >= maxDeliveries) {
+                await deadLetter(msgId, fields, attempts);
+                await reader.xAck(stream, group, msgId);
+                await clearDelivery(msgId);
+            }
+            // Otherwise leave pending; it is reclaimed after claimIdleMs.
+        }
+    }
+
+    /**
+     * Reclaim and re-run pending messages that have been idle for claimIdleMs,
+     * covering messages left pending by a previous run or a crashed consumer.
+     * Also logs the PEL depth so a growing backlog stays observable.
+     */
+    async function reclaimStale(): Promise<void> {
+        let start = "0-0";
+        try {
+            const pending = (await reader.xPending(stream, group)) as unknown as {
+                pending: number;
+            };
+            if (pending && typeof pending.pending === "number" && pending.pending > 0) {
+                console.log(
+                    `[Redis] PEL depth ${stream}:${group} = ${pending.pending}`,
+                );
+            }
+
+            for (;;) {
+                const res = (await reader.xAutoClaim(
+                    stream,
+                    group,
+                    consumer,
+                    claimIdleMs,
+                    start,
+                    { COUNT: count },
+                )) as unknown as {
+                    nextId: string;
+                    messages: Array<
+                        | { id: string; message: StreamFields }
+                        | null
+                    >;
+                };
+                for (const m of res.messages) {
+                    if (m) await handleMessage(m.id, m.message);
+                }
+                start = res.nextId;
+                if (!res.nextId || res.nextId === "0-0") break;
+            }
+        } catch (err) {
+            console.error(
+                `[Redis] reclaimStale error on ${stream} (group=${group}):`,
+                err,
+            );
+        }
+    }
+
+    let lastClaimAt = 0;
 
     while (true) {
         try {
@@ -247,18 +371,15 @@ export async function readGroupLoop(
             )) as RawStreamReply;
 
             const messages = extractMessages(reply);
-            if (messages.length === 0) continue;
-
             for (const msg of messages) {
-                try {
-                    await handler(msg.id, msg.message);
-                    await reader.xAck(stream, group, msg.id);
-                } catch (err) {
-                    console.error(
-                        `[Redis] Handler failed for ${stream} id=${msg.id} (left pending):`,
-                        err,
-                    );
-                }
+                await handleMessage(msg.id, msg.message);
+            }
+
+            // Periodically sweep stale pending messages for redelivery.
+            const now = Date.now();
+            if (now - lastClaimAt >= claimIntervalMs) {
+                lastClaimAt = now;
+                await reclaimStale();
             }
         } catch (err) {
             console.error(`[Redis] readGroupLoop error on ${stream}:`, err);
