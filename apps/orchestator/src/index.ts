@@ -45,27 +45,36 @@ const controlResponses = new Map<string, (v: ControlMessage) => void>();
 /** Initial create prompts to run automatically after PROJECT_CREATED */
 const pendingInitialPrompts = new Map<string, string>();
 
-function waitForServer(projectId: string, timeoutMs = 600_000) {
+/**
+ * Correlation key for a request/response pair (spec-06 §1). Prefer the
+ * globally-unique jobId so concurrent operations for the same project don't
+ * collide; fall back to projectId only for callers that never had a jobId.
+ */
+function idKey(projectId: string, jobId?: string): string {
+    return jobId && jobId.length > 0 ? jobId : projectId;
+}
+
+function waitForServer(jobId: string, timeoutMs = 600_000) {
     return new Promise<ServingMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
-            serverResponses.delete(projectId);
-            reject(new Error(`Serving pod timeout for ${projectId}`));
+            serverResponses.delete(jobId);
+            reject(new Error(`Serving pod timeout for ${jobId}`));
         }, timeoutMs);
-        serverResponses.set(projectId, (value) => {
+        serverResponses.set(jobId, (value) => {
             clearTimeout(timer);
             resolve(value);
         });
     });
 }
 
-function waitForControl(projectId: string, timeoutMs = 600_000) {
+function waitForControl(jobId: string, timeoutMs = 600_000) {
     return new Promise<ControlMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
-            controlResponses.delete(projectId);
+            controlResponses.delete(jobId);
             reject(new Error("Control pod timeout"));
         }, timeoutMs);
 
-        controlResponses.set(projectId, (value) => {
+        controlResponses.set(jobId, (value) => {
             clearTimeout(timer);
             resolve(value);
         });
@@ -111,7 +120,7 @@ async function ListenBackend() {
             }
 
             console.log(payload);
-            const { projectId, prompt } = payload;
+            const { projectId, prompt, jobId } = payload;
 
             switch (type) {
                 case CREATE_PROJECT:
@@ -121,17 +130,17 @@ async function ListenBackend() {
                     createProject(projectId).catch(console.error);
                     break;
                 case PROJECT_BUILD:
-                    buildProject(projectId).catch(console.error);
+                    buildProject(projectId, jobId).catch(console.error);
                     break;
                 case PROJECT_RUN:
-                    runProject(projectId).catch(console.error);
+                    runProject(projectId, jobId).catch(console.error);
                     break;
                 case PROMPT:
                     if (!prompt) {
                         console.log(`[${projectId}] Prompt missing payload`);
                         break;
                     }
-                    handlePrompt(projectId, prompt).catch(console.error);
+                    handlePrompt(projectId, jobId, prompt).catch(console.error);
                     break;
                 default:
                     console.log(`[orch] Unknown backend type: ${type}`);
@@ -155,10 +164,11 @@ async function ListenControlPod() {
             console.log(`[${projectId}] Received ${type} from control`);
 
             if (type !== PROJECT_INITIALIZED) {
-                const resolver = controlResponses.get(projectId);
+                const key = idKey(projectId, data.jobId as string | undefined);
+                const resolver = controlResponses.get(key);
                 if (resolver) {
                     resolver(data);
-                    controlResponses.delete(projectId);
+                    controlResponses.delete(key);
                 } else if (
                     type === PROJECT_BUILD_SUCCESS ||
                     type === PROJECT_BUILD_FAILED ||
@@ -168,6 +178,7 @@ async function ListenControlPod() {
                     // Late reply after HTTP waiter timed out — still notify backend.
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
+                        jobId: data.jobId as string | undefined,
                         type,
                         payload: data.payload || "",
                         success: data.success,
@@ -203,13 +214,15 @@ async function ListenServingPod() {
                 PROJECT_FAILED,
             ];
             if (validRunTypes.includes(type)) {
-                const resolver = serverResponses.get(projectId);
+                const key = idKey(projectId, data.jobId as string | undefined);
+                const resolver = serverResponses.get(key);
                 if (resolver) {
                     resolver(data);
-                    serverResponses.delete(projectId);
+                    serverResponses.delete(key);
                 } else {
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
+                        jobId: data.jobId as string | undefined,
                         type,
                         payload: payload || "",
                     });
@@ -242,7 +255,10 @@ async function ListenServingPod() {
                             );
                             // Brief delay so the workspace can open and attach SSE first.
                             setTimeout(() => {
-                                handlePrompt(projectId, initialPrompt).catch(
+                                // Fire-and-forget initial prompt (no backend HTTP
+                                // waiter), so it carries no correlated jobId; the
+                                // PROMPT_RESPONSE is surfaced via SSE.
+                                handlePrompt(projectId, undefined, initialPrompt).catch(
                                     console.error,
                                 );
                             }, 2500);
@@ -298,25 +314,30 @@ async function createProject(projectId: string) {
     );
 }
 
-async function buildProject(projectId: string) {
+async function buildProject(projectId: string, jobId?: string) {
     console.log("BUILD_PROJECT is being called");
 
     await publishEnvelope(OrchestatorToControl, {
         projectId,
+        jobId,
         type: PROJECT_BUILD,
     });
 
+    const key = idKey(projectId, jobId);
+
     try {
-        const response = await waitForControl(projectId);
+        const response = await waitForControl(key);
         if (response.type === PROJECT_BUILD_SUCCESS) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_BUILD_SUCCESS,
             });
             console.log(`[${projectId}] Build success forwarded`);
         } else if (response.type === PROJECT_BUILD_FAILED) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_BUILD_FAILED,
                 payload: response.payload || "",
             });
@@ -324,6 +345,7 @@ async function buildProject(projectId: string) {
         } else if (response.type === PROJECT_FAILED) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_FAILED,
                 payload: response.payload || "",
             });
@@ -332,25 +354,30 @@ async function buildProject(projectId: string) {
         console.error(`[${projectId}] Build timeout or error:`, err);
         await publishEnvelope(OrchestatorToBackend, {
             projectId,
+            jobId,
             type: PROJECT_BUILD_FAILED,
             payload: String(err),
         });
     }
 }
 
-async function runProject(projectId: string) {
+async function runProject(projectId: string, jobId?: string) {
     console.log(`[${projectId}] RUN_PROJECT called`);
 
     await publishEnvelope(OrchestatorToServing, {
         projectId,
+        jobId,
         type: PROJECT_RUN,
     });
 
+    const key = idKey(projectId, jobId);
+
     try {
-        const response = await waitForServer(projectId);
+        const response = await waitForServer(key);
         if (response.type === PROJECT_RUN_SUCCESS) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_RUN_SUCCESS,
                 payload: response.payload || "",
             });
@@ -358,6 +385,7 @@ async function runProject(projectId: string) {
         } else if (response.type === PROJECT_RUN_FAILED) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_RUN_FAILED,
                 payload: response.payload || "",
             });
@@ -365,6 +393,7 @@ async function runProject(projectId: string) {
         } else if (response.type === PROJECT_FAILED) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_FAILED,
                 payload: response.payload || "",
             });
@@ -373,25 +402,28 @@ async function runProject(projectId: string) {
         console.error(`[${projectId}] Run timeout or error:`, err);
         await publishEnvelope(OrchestatorToBackend, {
             projectId,
+            jobId,
             type: PROJECT_RUN_FAILED,
             payload: String(err),
         });
     }
 }
 
-async function handlePrompt(projectId: string, prompt: string) {
+async function handlePrompt(projectId: string, jobId: string | undefined, prompt: string) {
     console.log(`[${projectId}] PROMPT called`);
     await publishEnvelope(OrchestatorToControl, {
         projectId,
+        jobId,
         type: PROMPT,
         payload: prompt,
     });
 
     try {
-        const response = await waitForControl(projectId);
+        const response = await waitForControl(idKey(projectId, jobId));
         if (response.type === PROMPT_RESPONSE) {
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROMPT_RESPONSE,
                 payload: response.payload || "",
             });
@@ -405,6 +437,7 @@ async function handlePrompt(projectId: string, prompt: string) {
         console.error(`[${projectId}] Prompt timeout or error:`, err);
         await publishEnvelope(OrchestatorToBackend, {
             projectId,
+            jobId,
             type: PROMPT_RESPONSE,
             payload: "Error: " + String(err),
         });
