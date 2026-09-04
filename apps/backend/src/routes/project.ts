@@ -24,10 +24,11 @@ import {
 import { projectEvents } from "../controller/events";
 import { responseManager } from "../lib/responseManager";
 import { mintSseTicket, SSE_TICKET_TTL_MS } from "../lib/sseTicket";
+import { projectCreateRateLimiter } from "../lib/rateLimit";
 
 export const projectRouter = Router();
 
-projectRouter.post("/project", authMiddleware, createProject);
+projectRouter.post("/project", authMiddleware, projectCreateRateLimiter, createProject);
 
 projectRouter.get("/projects", authMiddleware, getProject);
 
