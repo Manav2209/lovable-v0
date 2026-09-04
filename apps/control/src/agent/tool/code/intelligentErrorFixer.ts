@@ -170,27 +170,19 @@ function createFallbackFixPlan(errors: any[], _errorAnalysis: any, fullBuildErro
       }
 
       if (componentsToAdd.size > 0) {
-        fixPlan.push({
-          priority: 2,
-          action: "executeCommand",
-          target: Array.from(componentsToAdd).join(", "),
-          description: `Add missing shadcn/ui components: ${Array.from(componentsToAdd).join(", ")}`,
-          details: {
-            command: `bunx --bun shadcn@latest add ${Array.from(componentsToAdd).join(" ")} --yes`
-          }
-        });
+        for (const component of Array.from(componentsToAdd)) {
+          fixPlan.push({
+            priority: 2,
+            action: "addShadcnComponent",
+            target: component,
+            description: `Add missing shadcn/ui component: ${component}`,
+            details: {
+              component,
+            },
+          });
+        }
       }
     }
-  }
-
-  if (fixPlan.length === 0 && errors.length > 0) {
-    fixPlan.push({
-      priority: 3,
-      action: "executeCommand",
-      target: "dependencies",
-      description: "Reinstall dependencies to fix module resolution",
-      details: { command: "bun install" }
-    });
   }
 
   return fixPlan;
@@ -257,7 +249,7 @@ CRITICAL INSTRUCTIONS:
    - Error: "Cannot apply unknown utility class \`\`" (empty class)
    - The error points to src/index.css or src/App.css but the REAL problem is in JSX components
    - ROOT CAUSE: A component has empty className="" or className={undefined} or className={''}
-   - SOLUTION: Use executeCommand with: grep -r "className=\"\"" src/ to find the culprit file
+   - SOLUTION: Use grepSearch with: className="" to find the culprit file
    - Then use replaceInFile to remove the empty className attribute entirely
    - IMPORTANT: The error says "file: /path/to/src/index.css" but DON'T fix index.css - fix the component!
 
@@ -278,7 +270,7 @@ CRITICAL INSTRUCTIONS:
 6. Always prioritize: Tailwind errors > addDependency for missing modules > import fixes
 
 Fix Action Types:
-- executeCommand: { command, cwd? } - Run shell commands (grep, sed, etc.) - Use for searching files
+- grepSearch: { pattern, searchPath? } - Search for regex patterns in code
 - addDependency: { packages: ["exact-package-name"], cwd? } - Install npm packages
 - replaceInFile: { filePath, oldString, newString } - Find-and-replace in specific file
 - updateFile: { filePath, content } - Replace entire file content
@@ -286,20 +278,7 @@ Fix Action Types:
 
 EXAMPLES:
 
-Example 1: Tailwind CSS empty class error
-[
-  {
-    "priority": 1,
-    "action": "executeCommand",
-    "target": "Find empty className",
-    "description": "Search for empty className attributes in components",
-    "details": {
-      "command": "grep -n 'className=\"\"' src/*.jsx src/**/*.jsx 2>/dev/null || echo 'Not found'"
-    }
-  }
-]
-
-Example 2: Missing package error
+Example 1: Missing package error
 [
   {
     "priority": 1,
@@ -312,7 +291,7 @@ Example 2: Missing package error
   }
 ]
 
-Example 3: Wrong import name (ONLY if file exists in project)
+Example 2: Wrong import name (ONLY if file exists in project)
 [
   {
     "priority": 1,
@@ -664,15 +643,6 @@ export async function fixErrorsNode(state: WorkflowState): Promise<Partial<Workf
           if (addDepTool) {
             const result = await addDepTool.invoke({
               packages: action.details.packages,
-              cwd: action.details.cwd,
-            });
-            if (result.success) successCount++;
-          }
-        } else if (action.action === "executeCommand" && action.details?.command) {
-          const cmdTool = toolMap["executeCommand"];
-          if (cmdTool) {
-            const result = await cmdTool.invoke({
-              command: action.details.command,
               cwd: action.details.cwd,
             });
             if (result.success) successCount++;

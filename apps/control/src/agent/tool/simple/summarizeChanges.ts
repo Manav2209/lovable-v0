@@ -54,12 +54,6 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
                 }
                 break;
 
-            case "executeCommand":
-                if (args.command) {
-                    commandsExecuted.push(args.command);
-                }
-                break;
-
             case "addShadcnComponent":
                 if (args.component) {
                     commandsExecuted.push(`addShadcnComponent ${args.component}`);

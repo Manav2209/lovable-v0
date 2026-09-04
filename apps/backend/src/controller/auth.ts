@@ -90,7 +90,7 @@ export const login = async (req: Request, res: Response) => {
         return res.status(401).json({
         success: false,
         data: null,
-        error: "EMAIL_DOESNOT_EXISTS",
+        error: "INVALID_CREDENTIALS",
         });
     }
 

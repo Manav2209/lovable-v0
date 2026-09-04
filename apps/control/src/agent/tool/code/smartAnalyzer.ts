@@ -102,7 +102,7 @@ Available tools and their arguments:
 - grepSearch: { pattern: string, globPattern?: string, searchPath?: string } - Search code with regex patterns
 
 **Command Execution:**
-- executeCommand: { command: string, cwd?: string } - Run shell commands
+- Shell command execution is DISABLED for safety. Use file/source tools instead.
 
 **Dependencies:**
 - addDependency: { packages: string[], cwd?: string } - Add NEW packages only

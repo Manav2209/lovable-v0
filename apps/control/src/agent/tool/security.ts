@@ -192,19 +192,3 @@ export function runProcess(
     });
     return runChild(child, opts);
 }
-
-/** Executes a shell command string. Intended for agent-driven execution. */
-export function runShellCommand(
-    command: string,
-    opts: ProcessOptions,
-): Promise<ProcessResult> {
-    if (command.length > MARGINAL_MAX_COMMAND_LENGTH) {
-        throw new Error("Command line too long");
-    }
-    const child = spawn(command, [], {
-        cwd: opts.cwd,
-        shell: true,
-        env: opts.env ?? sanitizeSubprocessEnv(),
-    });
-    return runChild(child, opts);
-}
