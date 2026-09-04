@@ -131,6 +131,7 @@ async function ListenOrchestator() {
             console.log("Message:", parsed);
             const type = parsed.type;
             const projectId = parsed.projectId as string | undefined;
+            const jobId = parsed.jobId as string | undefined;
             if (!projectId) {
                 console.log("Missing projectId");
                 return;
@@ -159,6 +160,7 @@ async function ListenOrchestator() {
                         await publishEnvelope(ControlToServing, {
                             projectId,
                             type: PROJECT_INITIALIZED,
+                            jobId,
                         });
 
                         const result =
@@ -185,7 +187,7 @@ async function ListenOrchestator() {
                 case PROJECT_BUILD:
                     try {
                         const buildResultSuccess =
-                            await buildProjectAndNotifyToRun(projectId);
+                            await buildProjectAndNotifyToRun(projectId, jobId);
                         const responseType = buildResultSuccess
                             ? PROJECT_BUILD_SUCCESS
                             : PROJECT_BUILD_FAILED;
@@ -193,6 +195,7 @@ async function ListenOrchestator() {
                         await publishEnvelope(ControlToOrchestrator, {
                             projectId,
                             type: responseType,
+                            jobId,
                             success: buildResultSuccess ? "true" : "false",
                             payload: buildResultSuccess ? "" : "Build failed",
                         });
@@ -204,6 +207,7 @@ async function ListenOrchestator() {
                         await publishEnvelope(ControlToOrchestrator, {
                             projectId,
                             type: PROJECT_BUILD_FAILED,
+                            jobId,
                             success: "false",
                             payload: String(error),
                         });
@@ -217,7 +221,7 @@ async function ListenOrchestator() {
                         break;
                     }
                     try {
-                        await processPrompt(projectId, prompt);
+                        await processPrompt(projectId, jobId, prompt);
                     } catch (err) {
                         console.error("Prompt failed", err);
                     }
