@@ -28,9 +28,13 @@ async function listenToOrchestrator() {
                 return;
             }
 
-            // TODO: Resolve waiting promise correlated by jobId (not just projectId)
+            // Resolve the waiting promise correlated by jobId (not projectId),
+            // so concurrent build/prompt/run requests for the same project
+            // each get their own response (spec-06 §1). Fall back to projectId
+            // only if the orchestrator didn't echo a jobId.
+            const key = (jobId as string | undefined) || (projectId as string);
             responseManager.resolve(
-                projectId as string,
+                key,
                 JSON.stringify({ type, payload }),
             );
         },
