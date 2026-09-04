@@ -23,6 +23,7 @@ import {
 } from "../controller/project";
 import { projectEvents } from "../controller/events";
 import { responseManager } from "../lib/responseManager";
+import { mintSseTicket, SSE_TICKET_TTL_MS } from "../lib/sseTicket";
 
 export const projectRouter = Router();
 
@@ -31,6 +32,39 @@ projectRouter.post("/project", authMiddleware, createProject);
 projectRouter.get("/projects", authMiddleware, getProject);
 
 projectRouter.get("/project/:projectId", authMiddleware, getProjectById);
+
+projectRouter.post("/project/:projectId/events/ticket",
+    authMiddleware,
+    async (req, res) => {
+        const projectId = String(req.params.projectId ?? "");
+
+        const project = await db
+            .select()
+            .from(projects)
+            .where(
+                and(
+                    eq(projects.id, projectId),
+                    eq(projects.userId, req.userId!),
+                ),
+            )
+            .limit(1);
+
+        if (project.length === 0) {
+            return res.status(404).json({
+                success: false,
+                data: null,
+                error: "PROJECT_NOT_FOUND",
+            });
+        }
+
+        const ticket = mintSseTicket(projectId, req.userId!);
+        return res.status(200).json({
+            success: true,
+            data: { ticket, expiresInMs: SSE_TICKET_TTL_MS },
+            error: null,
+        });
+    },
+);
 
 projectRouter.get("/project/:projectId/events", projectEvents);
 

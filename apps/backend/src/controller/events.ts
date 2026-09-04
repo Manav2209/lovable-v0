@@ -5,15 +5,49 @@ import { db } from "database";
 import { projects } from "../../../../packages/database/schema";
 import { and, eq } from "drizzle-orm";
 import jwt from "jsonwebtoken";
+import { redeemSseTicket } from "../lib/sseTicket";
+
+export const sseAccessControlAllowOrigin = (): string =>
+    process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
 function extractToken(req: Request): string | null {
-    const q = req.query.token;
-    if (typeof q === "string" && q.length > 0) return q;
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
         return authHeader.slice("Bearer ".length);
     }
     return null;
+}
+
+function extractQueryToken(req: Request): string | null {
+    const q = req.query.token;
+    return typeof q === "string" && q.length > 0 ? q : null;
+}
+
+async function resolveIdentity(
+    projectId: string,
+    token: string | null,
+    queryToken: string | null,
+): Promise<{ userId: string } | null> {
+    // Cleartext JWT never sent on the wire via query string: query tokens must
+    // be short-lived single-use tickets (spec-05 §5).
+    if (queryToken) {
+        const t = redeemSseTicket(queryToken);
+        if (t && t.projectId === projectId) {
+            return { userId: t.userId };
+        }
+        return null;
+    }
+
+    if (!token) return null;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
+            id?: string;
+        };
+        if (!decoded.id) return null;
+        return { userId: decoded.id };
+    } catch {
+        return null;
+    }
 }
 
 export async function projectEvents(req: Request, res: Response) {
@@ -26,8 +60,13 @@ export async function projectEvents(req: Request, res: Response) {
         });
     }
 
-    const token = extractToken(req);
-    if (!token) {
+    const identity = await resolveIdentity(
+        projectId,
+        extractToken(req),
+        extractQueryToken(req),
+    );
+
+    if (!identity) {
         return res.status(401).json({
             success: false,
             data: null,
@@ -35,20 +74,7 @@ export async function projectEvents(req: Request, res: Response) {
         });
     }
 
-    let userId: string;
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-            id?: string;
-        };
-        userId = decoded.id as string;
-        if (!userId) throw new Error("missing user id");
-    } catch {
-        return res.status(401).json({
-            success: false,
-            data: null,
-            error: "UNAUTHORIZED",
-        });
-    }
+    const userId = identity.userId;
 
     const project = await db
         .select()
@@ -68,7 +94,7 @@ export async function projectEvents(req: Request, res: Response) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Origin": sseAccessControlAllowOrigin(),
     });
     res.write(
         `data: ${JSON.stringify({ type: "connected", clientId: projectId })}\n\n`,

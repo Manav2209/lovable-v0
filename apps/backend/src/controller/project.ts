@@ -15,6 +15,7 @@ import {
 } from "types";
 import { eq, and, desc, asc } from "drizzle-orm";
 import { responseManager } from "../lib/responseManager";
+import { mintSseTicket } from "../lib/sseTicket";
 import type { Request, Response } from "express";
 
 export const createProject = async (req: Request, res: Response) => {
@@ -188,11 +189,8 @@ export const createConversation = async (req: Request, res: Response) => {
         const parsed = JSON.parse(response);
 
         if (parsed.type === PROMPT_RESPONSE) {
-            const token =
-                typeof req.headers.authorization === "string"
-                    ? req.headers.authorization.replace(/^Bearer\s+/i, "")
-                    : "";
-            const sseUrl = `/api/v1/project/${projectId}/events?token=${encodeURIComponent(token)}`;
+            const ticket = mintSseTicket(projectId, req.userId ?? "");
+            const sseUrl = `/api/v1/project/${projectId}/events?token=${encodeURIComponent(ticket)}`;
             return res.status(200).json({
                 success: true,
                 data: {

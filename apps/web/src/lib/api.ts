@@ -116,6 +116,13 @@ export const api = {
     return request<ProjectDetail>(`/api/v1/project/${projectId}`);
   },
 
+  getSseTicket(projectId: string) {
+    return request<{ ticket: string; expiresInMs: number }>(
+      `/api/v1/project/${projectId}/events/ticket`,
+      { method: "POST" },
+    );
+  },
+
   sendPrompt(projectId: string, prompt: string) {
     return request<{ sseUrl: string }>(
       `/api/v1/project/conversation/${projectId}`,
