@@ -56,7 +56,7 @@ export function resolveSafePath(baseDir: string, ...segments: string[]): string 
     return resolved;
 }
 
-const SECRET_ENV_PATTERN =
+export const SECRET_ENV_PATTERN =
     /(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|JWT|DATABASE_URL|S3_API|PRIVATE|PRESIGN)/i;
 
 /**

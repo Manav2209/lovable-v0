@@ -1,10 +1,11 @@
 import fs from "fs";
 import path from "path";
-import type { CaseResult, CaseStatus } from "./offline/runner";
+import type { AgentRunResult, AgentRunStatus } from "./agentRun";
+import { isSuccessfulRun, normalizeRunStatus } from "./agentRun";
 
 /** A single case result paired with its optional feature scores from the run. */
 export interface RunCaseSnapshot {
-    result: CaseResult;
+    result: AgentRunResult;
     features?: { score: number; total: number };
 }
 
@@ -29,9 +30,11 @@ export interface CaseDiff {
     caseId: string;
     tier: string;
     transition: Transition;
-    before?: CaseResult;
-    after?: CaseResult;
-    /** Improvement in status rank (positive = better after). */
+    before?: AgentRunResult;
+    after?: AgentRunResult;
+    /** OLD vs NEW style labels: improved / unchanged / regressed / failed */
+    verdict: "improved" | "unchanged" | "regressed" | "failed";
+    toolDelta?: number;
     statusDelta: number;
     durationDeltaMs?: number;
     fixDelta?: number;
@@ -56,10 +59,10 @@ export interface DiffReport {
 }
 
 /** Objective ordering of build outcomes; higher is better. */
-const STATUS_RANK: Record<CaseStatus, number> = {
-    passed_build: 3,
-    failed_build: 2,
-    workflow_error: 1,
+const STATUS_RANK: Record<AgentRunStatus, number> = {
+    completed: 3,
+    build_failed: 2,
+    agent_error: 1,
     timeout: 1,
     crashed: 0,
 };
@@ -79,7 +82,8 @@ export async function loadRun(runDir: string): Promise<RunSnapshot> {
         const files = await fs.promises.readdir(resultsDir);
         for (const f of files.filter((x) => x.endsWith(".json"))) {
             const raw = await fs.promises.readFile(path.join(resultsDir, f), "utf8");
-            const result = JSON.parse(raw) as CaseResult;
+            const result = JSON.parse(raw) as AgentRunResult & { status: string };
+            result.status = normalizeRunStatus(result.status);
             cases.set(result.caseId, { result });
         }
     }
@@ -129,7 +133,7 @@ export function compareRuns(before: RunSnapshot, after: RunSnapshot): DiffReport
             else if (aRank < bRank) transition = "regressed";
             else
                 transition =
-                    a.result.status === "passed_build" ? "stable_pass" : "stable_fail";
+                transition = isSuccessfulRun(a.result.status) ? "stable_pass" : "stable_fail";
         } else transition = "removed";
 
         switch (transition) {
@@ -148,10 +152,20 @@ export function compareRuns(before: RunSnapshot, after: RunSnapshot): DiffReport
             featureTotalDelta += (fA.total ?? 0) - (fB.total ?? 0);
         }
 
+        const verdict: CaseDiff["verdict"] =
+            !a || a.result.status === "crashed" || a.result.status === "timeout"
+                ? "failed"
+                : transition === "improved"
+                  ? "improved"
+                  : transition === "regressed"
+                    ? "regressed"
+                    : "unchanged";
+
         cases.push({
             caseId,
             tier: (a?.result.tier ?? b?.result.tier) ?? "",
             transition,
+            verdict,
             before: b?.result,
             after: a?.result,
             statusDelta,
@@ -160,9 +174,9 @@ export function compareRuns(before: RunSnapshot, after: RunSnapshot): DiffReport
                     ? a.result.durationMs - b.result.durationMs
                     : undefined,
             fixDelta:
-                (b?.result.fixAttempts ?? 0) != null && (a?.result.fixAttempts ?? 0) != null
-                    ? (a?.result.fixAttempts ?? 0) - (b?.result.fixAttempts ?? 0)
-                    : undefined,
+                (a?.result.repair?.attempts ?? 0) - (b?.result.repair?.attempts ?? 0),
+            toolDelta:
+                (a?.result.agent?.toolCalls ?? 0) - (b?.result.agent?.toolCalls ?? 0),
             featuresBefore: b?.features ?? null,
             featuresAfter: a?.features ?? null,
         });
@@ -209,7 +223,7 @@ const ICONS: Record<Transition, string> = {
     removed: "· removed",
 };
 
-function statusStr(c?: CaseResult): string {
+function statusStr(c?: AgentRunResult): string {
     return c ? c.status : "—";
 }
 
@@ -268,8 +282,12 @@ export async function writeDiff(runDir: string, diff: DiffReport): Promise<void>
             `| Duration | ${c.before ? `${(c.before.durationMs / 1000).toFixed(1)}s` : "n/a"} | ${c.after ? `${(c.after.durationMs / 1000).toFixed(1)}s` : "n/a"} |`,
         );
         lines.push(
-            `| Fix attempts | ${c.before?.fixAttempts ?? 0} | ${c.after?.fixAttempts ?? 0} |`,
+            `| Fix attempts | ${c.before?.repair?.attempts ?? 0} | ${c.after?.repair?.attempts ?? 0} |`,
         );
+        lines.push(
+            `| Tool calls | ${c.before?.agent?.toolCalls ?? "n/a"} | ${c.after?.agent?.toolCalls ?? "n/a"} |`,
+        );
+        lines.push(`| Verdict | ${c.verdict} | |`);
         const featB = c.featuresBefore
             ? `${(c.featuresBefore.score / (c.featuresBefore.total || 1)) * 100}%`
             : "n/a";

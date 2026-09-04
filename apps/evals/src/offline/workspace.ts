@@ -23,7 +23,11 @@ const EXCLUDED = new Set(["node_modules", "dist", ".git", ".turbo"]);
  * Node_modules are junctioned (instant, zero disk) from the template so
  * bun install is essentially a no-op verification rather than a cold fetch.
  */
-export async function seedWorkspace(runDir: string, caseId: string): Promise<SeededWorkspace> {
+export async function seedWorkspace(
+    runDir: string,
+    caseId: string,
+    options?: { fixture?: string },
+): Promise<SeededWorkspace> {
     const base = await fs.promises.mkdtemp(path.join(runDir, "ws-"));
     const sharedDir = path.join(base, "shared");
     const projectId = `eval-${caseId}-${Date.now().toString(36)}`;
@@ -31,6 +35,14 @@ export async function seedWorkspace(runDir: string, caseId: string): Promise<See
 
     await fs.promises.mkdir(projectDir, { recursive: true });
     await copyDir(TEMPLATE_DIR, projectDir);
+
+    if (options?.fixture) {
+        const fixtureDir = path.resolve(import.meta.dir, "..", "..", "fixtures", options.fixture);
+        if (!fs.existsSync(fixtureDir)) {
+            throw new Error(`Eval fixture not found: ${fixtureDir}`);
+        }
+        await copyDir(fixtureDir, projectDir);
+    }
 
     // Symlink template's pre-installed node_modules into the workspace.
     const templateNM = path.join(TEMPLATE_DIR, "node_modules");

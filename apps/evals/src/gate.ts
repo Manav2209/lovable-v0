@@ -13,13 +13,15 @@ import type { ScoredCase } from "./score";
 export interface GateThresholds {
     average?: number;
     cases?: Record<string, number>;
+    /** Fail the gate if fewer than this many cases were scored. */
+    minCases?: number;
 }
 
 /** A single threshold breach detected during evaluation. */
 export interface GateBreach {
     /** omitted for the average check */
     caseId?: string;
-    kind: "average" | "case";
+    kind: "average" | "case" | "empty_run" | "incomplete_run";
     actual: number;
     floor: number;
     tier?: string;
@@ -34,13 +36,15 @@ export interface GateResult {
 export interface GateScoredCase {
     caseId: string;
     overall: number;
+    productScore?: number;
     tier?: string;
 }
 
 export function toGateCases(scores: ScoredCase[], tiers: Record<string, string>): GateScoredCase[] {
     return scores.map((s) => ({
         caseId: s.caseId,
-        overall: s.overall,
+        overall: s.productScore ?? s.overall,
+        productScore: s.productScore,
         tier: tiers[s.caseId],
     }));
 }
@@ -67,8 +71,25 @@ export async function loadThresholds(
 export function evaluateGate(
     scores: GateScoredCase[],
     thresholds: GateThresholds,
+    options?: { expectedCases?: number },
 ): GateResult {
     const breaches: GateBreach[] = [];
+
+    if (scores.length === 0) {
+        return {
+            passed: false,
+            breaches: [{ kind: "empty_run", actual: 0, floor: options?.expectedCases ?? thresholds.minCases ?? 1 }],
+        };
+    }
+
+    const expected = options?.expectedCases ?? thresholds.minCases;
+    if (expected != null && scores.length < expected) {
+        breaches.push({
+            kind: "incomplete_run",
+            actual: scores.length,
+            floor: expected,
+        });
+    }
 
     if (thresholds.average !== undefined && scores.length > 0) {
         const avg = Math.round(
@@ -120,6 +141,10 @@ export function renderGate(
                 lines.push(
                     `    average ${b.actual}/100 < floor ${b.floor}/100`,
                 );
+            } else if (b.kind === "empty_run") {
+                lines.push(`    empty/invalid run: 0 scored cases (need ${b.floor})`);
+            } else if (b.kind === "incomplete_run") {
+                lines.push(`    incomplete run: ${b.actual} scored cases < ${b.floor} expected`);
             } else {
                 lines.push(
                     `    ${b.caseId}: ${b.actual}/100 < floor ${b.floor}/100` +

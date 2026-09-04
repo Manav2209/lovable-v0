@@ -6,11 +6,16 @@ import { sendSSEMessage } from "../../sse";
 import { requireAgentRuntime } from "../runtime";
 import { codingAgentTools } from "../tool/codingTools";
 import type { WorkflowState } from "./workflow";
+import { emptyAgentStats, recordToolUse, type AgentStats } from "../agentStats";
+import { observe } from "../../observability/trace";
 
 const MAX_AGENT_STEPS = Number(process.env.MAX_AGENT_STEPS || 20);
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || 40);
 const MAX_RUNTIME_MS = Number(process.env.MAX_AGENT_RUNTIME_MS || 8 * 60_000);
 const STALL_REPEAT = 3;
+
+const RETRIEVAL_TOOLS = new Set(["listDir", "grepSearch", "readFile"]);
+const MUTATION_TOOLS = new Set(["createFile", "updateFile", "replaceInFile", "deleteFile"]);
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
 
@@ -29,6 +34,18 @@ function bindModel() {
 }
 
 const toolMap = Object.fromEntries(codingAgentTools.map((t) => [t.name, t]));
+
+function extractUsageMetadata(response: unknown): Record<string, unknown> | undefined {
+    if (!response || typeof response !== "object") return undefined;
+    const msg = response as Record<string, unknown>;
+    const usage = msg.usage_metadata as Record<string, unknown> | undefined;
+    if (!usage) return undefined;
+    return {
+        promptTokens: usage.input_tokens,
+        completionTokens: usage.output_tokens,
+        totalTokens: usage.total_tokens,
+    };
+}
 
 export async function runReactLoop(
     state: WorkflowState,
@@ -56,6 +73,8 @@ export async function runReactLoop(
     const toolResults: unknown[] = [...(state.toolResults || [])];
     let toolCalls = 0;
     const stall: string[] = [];
+    const stats: AgentStats = emptyAgentStats();
+    const loopStarted = started;
 
     sendSSEMessage(state.clientId, {
         type: "react_start",
@@ -64,28 +83,43 @@ export async function runReactLoop(
 
     for (let step = 0; step < maxSteps; step++) {
         if (runtime.abortSignal.aborted || state.abortSignal?.aborted) {
-            return { error: "workflow aborted (eval timeout)", toolResults };
+            return { error: "workflow aborted (eval timeout)", toolResults, agentStats: stats };
         }
         if (Date.now() - started > MAX_RUNTIME_MS) {
-            return { error: `Exceeded MAX_AGENT_RUNTIME_MS of ${MAX_RUNTIME_MS}`, toolResults };
+            return { error: `Exceeded MAX_AGENT_RUNTIME_MS of ${MAX_RUNTIME_MS}`, toolResults, agentStats: stats };
         }
 
-        const response = await bound.invoke(messages as never);
+        stats.steps += 1;
+        const stepNumber = stats.steps;
+
+        const stepStarted = Date.now();
+
+        const response = await observe(
+            `ReAct Step ${stepNumber}`,
+            {
+                metadata: { phase: "react_step", stepNumber },
+            },
+            async () => bound.invoke(messages as never),
+            (result) => ({
+                ...extractUsageMetadata(result),
+                stepDurationMs: Date.now() - stepStarted,
+            }),
+        );
         const calls = extractToolCalls(response as { tool_calls?: ToolCall[] });
 
         if (!calls.length) {
             sendSSEMessage(state.clientId, {
                 type: "react_complete",
-                message: `ReAct finished after ${step + 1} step(s)`,
+                message: `ReAct finished after ${stats.steps} step(s)`,
             });
-            return { toolResults, toolsExecuted: true };
+            return { toolResults, toolsExecuted: true, agentStats: stats };
         }
 
         messages.push(response);
 
         for (const call of calls) {
             if (toolCalls >= MAX_TOOL_CALLS) {
-                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true };
+                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true, agentStats: stats };
             }
 
             const signature = `${call.name}:${JSON.stringify(call.args)}`;
@@ -96,6 +130,7 @@ export async function runReactLoop(
                     error: `Agent stalled repeating ${call.name}`,
                     toolResults,
                     toolsExecuted: true,
+                    agentStats: stats,
                 };
             }
 
@@ -106,27 +141,72 @@ export async function runReactLoop(
             });
 
             const tool = toolMap[call.name];
-            let result: unknown;
-            if (!tool) {
-                result = { success: false, message: `Unknown tool: ${call.name}` };
-            } else {
+            const isRetrieval = RETRIEVAL_TOOLS.has(call.name);
+
+            const executeTool = async () => {
+                if (!tool) {
+                    return { success: false, message: `Unknown tool: ${call.name}` };
+                }
                 try {
-                    result = await (tool as { invoke: (args: unknown) => Promise<unknown> }).invoke(
+                    return await (tool as { invoke: (args: unknown) => Promise<unknown> }).invoke(
                         call.args ?? {},
                     );
                 } catch (error) {
-                    result = {
+                    return {
                         success: false,
                         message: error instanceof Error ? error.message : String(error),
                     };
                 }
+            };
+
+            const toolResult = isRetrieval
+                ? await observe(
+                    "Retrieval",
+                    { metadata: { phase: "retrieval", stepNumber } },
+                    () =>
+                        observe(
+                            `tool:${call.name}`,
+                            {
+                                metadata: {
+                                    phase: "retrieval",
+                                    stepNumber,
+                                    toolName: call.name,
+                                },
+                                input: call.args,
+                            },
+                            executeTool,
+                        ),
+                  )
+                : await observe(
+                    `tool:${call.name}`,
+                    {
+                        metadata: {
+                            phase: "tool",
+                            stepNumber,
+                            toolName: call.name,
+                        },
+                        input: call.args,
+                    },
+                    executeTool,
+                  );
+
+            if (MUTATION_TOOLS.has(call.name) && toolResult && typeof toolResult === "object") {
+                const res = toolResult as Record<string, unknown>;
+                const files = (res.changedFiles ?? res.files ?? res.created ?? res.modified) as
+                    | string | string[] | undefined;
+                if (Array.isArray(files)) {
+                    stats.changedFiles.push(...files);
+                } else if (typeof files === "string" && files) {
+                    stats.changedFiles.push(files);
+                }
             }
 
             toolCalls += 1;
-            toolResults.push({ toolCall: { tool: call.name, args: call.args }, result });
+            recordToolUse(stats, call.name, Date.now() - loopStarted);
+            toolResults.push({ toolCall: { tool: call.name, args: call.args }, result: toolResult });
 
             sendSSEMessage(state.clientId, {
-                type: result && typeof result === "object" && "success" in result && (result as { success: boolean }).success === false
+                type: toolResult && typeof toolResult === "object" && "success" in toolResult && (toolResult as { success: boolean }).success === false
                     ? "tool_error"
                     : "tool_completed",
                 message: `Completed: ${call.name}`,
@@ -135,7 +215,7 @@ export async function runReactLoop(
 
             messages.push(
                 new ToolMessage({
-                    content: JSON.stringify(result),
+                    content: JSON.stringify(toolResult),
                     tool_call_id: call.id || call.name,
                 }),
             );
@@ -146,5 +226,6 @@ export async function runReactLoop(
         error: `Exceeded MAX_AGENT_STEPS of ${maxSteps}`,
         toolResults,
         toolsExecuted: true,
+        agentStats: stats,
     };
 }

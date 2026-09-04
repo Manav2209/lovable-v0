@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { EvalTier, EvalCase } from "./dataset";
 import type { EvaluatedCase } from "./report";
+import { normalizeRunStatus } from "./agentRun";
 
 export interface ScoreWeights {
     /** Build success + completeness (0-1). */
@@ -31,6 +32,10 @@ export interface CaseScore {
     score: number;
     max: number;
     overall: number;
+    /** Build + features + (valid judge quality). Scaled 0-100. */
+    productScore: number;
+    /** Duration + fix efficiency. Scaled 0-100. Not used as a gate penalty for extra ReAct tool calls. */
+    efficiencyScore: number;
     breakdown: ScoreDimension[];
 }
 
@@ -76,15 +81,16 @@ export function computeScore(
     // Build success (0-100).
     let buildRaw: number;
     let buildNote: string | undefined;
-    if (result.status === "passed_build") {
+    const status = normalizeRunStatus(String(result.status));
+    if (status === "completed") {
         buildRaw = 100;
-        buildNote = result.buildStatus ?? "passed";
-    } else if (result.status === "failed_build") {
+        buildNote = result.build?.status ?? "passed";
+    } else if (status === "build_failed") {
         buildRaw = 40;
         buildNote = "failed build";
-    } else if (result.status === "workflow_error") {
+    } else if (status === "agent_error") {
         buildRaw = 10;
-        buildNote = result.error ?? "workflow error";
+        buildNote = result.error ?? "agent error";
     } else {
         buildRaw = 0;
         buildNote = result.status;
@@ -166,7 +172,23 @@ export function computeScore(
     const overall = Math.min(100, Math.round(rawTotal * bonus));
     const score = Math.round(rawTotal);
 
-    return { score, max: 100, overall, breakdown: dims };
+    const judgeValid = Boolean(judge?.valid);
+    const productDenom = judgeValid
+        ? weights.build + weights.features + weights.quality
+        : weights.build + weights.features;
+    const productRaw =
+        (dims.find((d) => d.label === "Build")?.raw ?? 0) * weights.build +
+        (dims.find((d) => d.label === "Features")?.raw ?? 0) * weights.features +
+        (judgeValid ? (dims.find((d) => d.label === "Quality")?.raw ?? 0) * weights.quality : 0);
+    const productScore = productDenom > 0 ? Math.round((productRaw / productDenom) * 100) : 0;
+
+    const effDenom = weights.fixEfficiency + weights.duration;
+    const effRaw =
+        (dims.find((d) => d.label === "FixEfficiency")?.raw ?? 0) * weights.fixEfficiency +
+        (dims.find((d) => d.label === "Duration")?.raw ?? 0) * weights.duration;
+    const efficiencyScore = effDenom > 0 ? Math.round((effRaw / effDenom) * 100) : 0;
+
+    return { score, max: 100, overall, productScore, efficiencyScore, breakdown: dims };
 }
 
 /** Computes scores for a set of evaluated cases, keyed by case id. */
@@ -210,6 +232,7 @@ export function renderScoreTable(scores: ScoredCase[]): string[] {
     for (const s of scores) {
         lines.push(
             `  ${s.caseId.padEnd(22)} ${String(s.overall).padStart(3)} (base ${String(s.score).padStart(3)})` +
+                `  product:${String(s.productScore).padStart(3)} eff:${String(s.efficiencyScore).padStart(3)}` +
                 `  b:${s.breakdown[0]?.raw ?? 0} f:${s.breakdown[1]?.raw ?? 0}` +
                 ` q:${s.breakdown[2]?.raw ?? 0}`,
         );
@@ -244,7 +267,7 @@ export async function writeScoreBoard(
     for (const s of scores) {
         lines.push(`## ${s.caseId} — ${s.overall}/100`);
         lines.push("");
-        lines.push(`**Base:** ${s.score}/100`);
+        lines.push(`**Base:** ${s.score}/100 · **Product:** ${s.productScore}/100 · **Efficiency:** ${s.efficiencyScore}/100`);
         lines.push("");
         lines.push(`| Dimension | Raw | Weight | Points | Note |`);
         lines.push(`|-----------|-----|--------|--------|------|`);

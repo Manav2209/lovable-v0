@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import type { CaseResult } from "./offline/runner";
+import type { AgentRunResult } from "./agentRun";
+import { isSuccessfulRun } from "./agentRun";
 import type { CheckResult, EvalMetrics } from "./checks";
 
 export interface EvalReport {
@@ -12,10 +13,12 @@ export interface EvalReport {
 }
 
 export interface EvaluatedCase {
-    result: CaseResult;
+    result: AgentRunResult;
     metrics: EvalMetrics;
     checks?: CheckResult;
     judge?: import("./judge").JudgeResult;
+    dimensions?: import("./agentRun").EvaluationDimensions;
+    behavior?: import("./behavior").BehaviorCheck[];
 }
 
 export function printSummary(report: EvalReport): void {
@@ -26,13 +29,16 @@ export function printSummary(report: EvalReport): void {
     console.log(sep);
 
     for (const c of report.cases) {
-        const icon = c.result.status === "passed_build" ? "✔" : "✘";
+        const icon = isSuccessfulRun(c.result.status) ? "✔" : "✘";
         const checkStr = c.checks
             ? ` [features ${c.checks.score}/${c.checks.total}]`
             : "";
         const dur = `${(c.result.durationMs / 1000).toFixed(1)}s`;
         console.log(
-            `  ${icon} ${c.result.caseId.padEnd(22)} ${c.result.status.padEnd(16)} ${dur.padStart(8)}${checkStr}`,
+            `  ${icon} ${c.result.caseId.padEnd(22)} ${c.result.status.padEnd(16)} ${dur.padStart(8)}${checkStr}` +
+                (c.dimensions
+                    ? `  exec=${c.dimensions.executionStatus} build=${c.dimensions.buildStatus} checks=${c.dimensions.checksStatus} judge=${c.dimensions.judgeStatus}`
+                    : ""),
         );
         if (c.checks && c.checks.score < c.checks.total) {
             for (const f of c.checks.features) {
@@ -52,7 +58,7 @@ export function printSummary(report: EvalReport): void {
         }
     }
 
-    const passed = report.cases.filter((c) => c.result.status === "passed_build").length;
+    const passed = report.cases.filter((c) => isSuccessfulRun(c.result.status)).length;
     const allFeatures = report.cases.reduce(
         (a, c) => a + (c.checks?.total ?? 0),
         0,
@@ -86,7 +92,7 @@ export async function writeReport(
     lines.push("");
 
     for (const c of report.cases) {
-        const icon = c.result.status === "passed_build" ? "✔" : "✘";
+        const icon = isSuccessfulRun(c.result.status) ? "✔" : "✘";
         const dur = `${(c.result.durationMs / 1000).toFixed(1)}s`;
         lines.push(`## ${icon} ${c.result.caseId} (${c.result.tier})`);
         lines.push("");
@@ -94,16 +100,22 @@ export async function writeReport(
         lines.push(`|--------|-------|`);
         lines.push(`| Status | ${c.result.status} |`);
         lines.push(`| Duration | ${dur} |`);
-        lines.push(`| Build | ${c.result.buildStatus ?? "n/a"} |`);
+        lines.push(`| Build | ${c.result.build?.status ?? "n/a"} |`);
         lines.push(
-            `| Fix attempts | ${c.result.fixAttempts ?? 0}${
-                c.result.maxFixAttempts != null ? ` / ${c.result.maxFixAttempts}` : ""
+            `| Fix attempts | ${c.result.repair?.attempts ?? 0}${
+                c.result.repair?.maxAttempts != null ? ` / ${c.result.repair.maxAttempts}` : ""
             } |`,
         );
+        lines.push(`| Agent steps | ${c.result.agent?.steps ?? "n/a"} |`);
+        lines.push(`| Tool calls | ${c.result.agent?.toolCalls ?? "n/a"} |`);
         lines.push(`| Files created | ${c.metrics.filesCreated} |`);
         lines.push(`| Files modified | ${c.metrics.filesModified} |`);
+        lines.push(`| Files deleted | ${c.result.files?.deleted ?? c.result.workspaceDiff?.deleted.length ?? 0} |`);
         lines.push(`| Dependencies added | ${c.metrics.dependenciesAdded} |`);
         lines.push(`| Events captured | ${c.result.eventsCaptured} |`);
+        if (c.result.traceId) {
+            lines.push(`| Trace | \`${c.result.traceId}\` |`);
+        }
         if (c.result.error) {
             lines.push(`| Error | ${c.result.error.slice(0, 200)} |`);
         }
@@ -136,10 +148,19 @@ export async function writeReport(
             lines.push(`| Reusability | ${(j.reusability * 100).toFixed(0)}/100 |`);
             lines.push(`| Notes | ${j.notes} |`);
         }
+
+        if (c.behavior && c.behavior.length > 0) {
+            lines.push("");
+            lines.push(`### Agent behavior (diagnostic)`);
+            lines.push("");
+            for (const b of c.behavior) {
+                lines.push(`- ${b.passed ? "✔" : "✘"} \`${b.id}\` — ${b.detail}`);
+            }
+        }
         lines.push("");
     }
 
-    const passed = report.cases.filter((c) => c.result.status === "passed_build").length;
+    const passed = report.cases.filter((c) => isSuccessfulRun(c.result.status)).length;
     const allFeatures = report.cases.reduce((a, c) => a + (c.checks?.total ?? 0), 0);
     const passedFeatures = report.cases.reduce((a, c) => a + (c.checks?.score ?? 0), 0);
     lines.push(sep);

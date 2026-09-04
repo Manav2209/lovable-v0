@@ -48,6 +48,17 @@ describe("evaluateGate", () => {
     test("empty thresholds is a no-op gate", () => {
         expect(evaluateGate(scores, {}).passed).toBe(true);
     });
+
+    test("empty run fails the gate", () => {
+        expect(evaluateGate([], { average: 80 }).passed).toBe(false);
+        expect(evaluateGate([], { average: 80 }).breaches[0]?.kind).toBe("empty_run");
+    });
+
+    test("incomplete run when fewer cases than expected", () => {
+        const r = evaluateGate(scores, {}, { expectedCases: 5 });
+        expect(r.passed).toBe(false);
+        expect(r.breaches[0]?.kind).toBe("incomplete_run");
+    });
 });
 
 describe("toGateCases", () => {

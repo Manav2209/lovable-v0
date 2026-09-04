@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { WorkflowState } from "@control/agent/graphs/workflow";
+import type { AgentRunResult } from "./agentRun";
 import { analyzeProject, matchAstCheck, type AstIndex } from "./ast";
 
 export interface FeatureResult {
@@ -27,17 +27,16 @@ export interface CheckResult {
     features: FeatureResult[];
 }
 
-export function extractMetrics(state: WorkflowState, durationMs: number): EvalMetrics {
-    const cs = state.changeSummary;
+export function extractMetrics(result: AgentRunResult): EvalMetrics {
     return {
-        buildStatus: state.buildStatus,
-        fixAttempts: state.fixAttempts,
-        durationMs,
-        filesCreated: cs?.filesCreated.length ?? 0,
-        filesModified: cs?.filesModified.length ?? 0,
-        dependenciesAdded: cs?.dependenciesAdded.length ?? 0,
-        completed: state.completed,
-        error: state.error,
+        buildStatus: result.build?.status,
+        fixAttempts: result.repair?.attempts ?? 0,
+        durationMs: result.durationMs,
+        filesCreated: result.files?.created ?? result.workspaceDiff?.created.length ?? 0,
+        filesModified: result.files?.modified ?? result.workspaceDiff?.modified.length ?? 0,
+        dependenciesAdded: result.dependenciesAdded,
+        completed: result.completed,
+        error: result.error,
     };
 }
 

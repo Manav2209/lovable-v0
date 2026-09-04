@@ -12,6 +12,8 @@ export interface EvalCase {
     expectedFeatures: string[];
     maxDurationMs?: number;
     maxFixAttempts?: number;
+    /** Overlay files from apps/evals/fixtures/<name> after seeding the template. */
+    fixture?: string;
 }
 
 export const EVAL_CASES: EvalCase[] = [
@@ -147,6 +149,58 @@ export const EVAL_CASES: EvalCase[] = [
         expectedFeatures: ["search", "filter", "recipe", "ingredients", "useState", "cuisine"],
         maxDurationMs: 12 * 60_000,
         maxFixAttempts: 4,
+    },
+
+    // ── Existing-app edits (ReAct incremental modification) ──
+    {
+        id: "edit-existing-app",
+        tier: "medium",
+        fixture: "existing-todo",
+        prompt:
+            "This project already has a working todo list. Add an optional due-date field to each task and show it next to the task text. Do not replace the whole app with a Hello World template.",
+        expectedFeatures: ["due", "todo", "useState", "file:src/App.jsx"],
+        maxDurationMs: 10 * 60_000,
+        maxFixAttempts: 3,
+    },
+    {
+        id: "add-page-to-existing-router",
+        tier: "medium",
+        fixture: "existing-nav",
+        prompt:
+            "This app already has a Home view and a nav link. Add an About page with team info and a nav link to it. Prefer react-router if you add real routes; keep the existing Home welcome message.",
+        expectedFeatures: ["About", "Home", "nav", "Welcome"],
+        maxDurationMs: 12 * 60_000,
+        maxFixAttempts: 3,
+    },
+    {
+        id: "add-component-using-existing-library",
+        tier: "easy",
+        fixture: "existing-todo",
+        prompt:
+            "Keep the existing todo list. Add a Card from the existing shadcn/ui Card component (@/components/ui/card) around the list. Do not add a new CSS framework.",
+        expectedFeatures: ["Card", "todo", "file:src/components/ui/card.jsx"],
+        maxDurationMs: 10 * 60_000,
+        maxFixAttempts: 3,
+    },
+    {
+        id: "modify-existing-component",
+        tier: "easy",
+        fixture: "existing-counter",
+        prompt:
+            "The Counter component currently shows a static Count: 0 button. Make it a real counter with increment using useState. Keep the Counter component rather than deleting it.",
+        expectedFeatures: ["useState", "Counter", "button"],
+        maxDurationMs: 10 * 60_000,
+        maxFixAttempts: 3,
+    },
+    {
+        id: "preserve-existing-functionality",
+        tier: "medium",
+        fixture: "existing-todo",
+        prompt:
+            "Keep add and delete for todos working. Also add a completed checkbox that strikethroughs the task text when checked.",
+        expectedFeatures: ["delete", "todo", "strikethrough", "useState"],
+        maxDurationMs: 10 * 60_000,
+        maxFixAttempts: 3,
     },
 ];
 

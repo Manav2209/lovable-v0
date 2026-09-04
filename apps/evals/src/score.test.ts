@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { computeScore, DEFAULT_WEIGHTS, type CaseEvalInput } from "./score";
 import type { EvalCase } from "./dataset";
 import type { EvaluatedCase } from "./report";
-import type { CaseStatus } from "./offline/runner";
+import type { AgentRunStatus } from "./agentRun";
 
 function caseBase(overrides: Partial<EvalCase> = {}): EvalCase {
     return {
@@ -27,19 +27,19 @@ function baseEvaluated(): EvaluatedCase {
         result: {
             runId: "r",
             caseId: "counter-basic",
-            tier: "easy",
             projectId: "p",
-            status: "passed_build" as CaseStatus,
+            status: "completed",
             completed: true,
-            buildStatus: "tested",
-            fixAttempts: 0,
-            maxFixAttempts: 3,
+            build: { status: "passed" },
+            repair: { attempts: 0, maxAttempts: 3 },
+            dependenciesAdded: 0,
             durationMs: 180_000,
             eventsCaptured: 10,
             timestamp: 0,
+            maxFixAttempts: 3,
         },
         metrics: {
-            buildStatus: "tested",
+            buildStatus: "passed",
             fixAttempts: 0,
             durationMs: 180_000,
             filesCreated: 1,
@@ -112,9 +112,9 @@ describe("computeScore build/feature/fix effects", () => {
         const input = evalInput({
             result: {
                 ...baseEvaluated().result,
-                status: "workflow_error" as const,
+                status: "agent_error" as AgentRunStatus,
                 error: "boom",
-                fixAttempts: 3,
+                repair: { attempts: 3, maxAttempts: 3 },
                 maxFixAttempts: 3,
                 completed: false,
             },
@@ -131,7 +131,7 @@ describe("computeScore build/feature/fix effects", () => {
         input.evaluated = {
             ...baseEvaluated(),
             metrics: { ...baseEvaluated().metrics, fixAttempts: 3 },
-            result: { ...baseEvaluated().result, fixAttempts: 3 },
+            result: { ...baseEvaluated().result, repair: { attempts: 3, maxAttempts: 3 } },
         };
         const fix = computeScore(input).breakdown.find((d) => d.label === "FixEfficiency")!;
         // 3/3 attempts -> 100 - 60 = 40
