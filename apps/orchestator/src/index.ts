@@ -127,7 +127,7 @@ async function ListenBackend() {
                     if (prompt) {
                         pendingInitialPrompts.set(projectId, prompt);
                     }
-                    createProject(projectId).catch(console.error);
+                    createProject(projectId, jobId).catch(console.error);
                     break;
                 case PROJECT_BUILD:
                     buildProject(projectId, jobId).catch(console.error);
@@ -241,6 +241,7 @@ async function ListenServingPod() {
                 case PROJECT_CREATED:
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
+                        jobId: data.jobId as string | undefined,
                         type: PROJECT_INITIALIZED,
                     });
                     console.log(
@@ -268,6 +269,7 @@ async function ListenServingPod() {
                 case PROJECT_FAILED:
                     await publishEnvelope(OrchestatorToBackend, {
                         projectId,
+                        jobId: data.jobId as string | undefined,
                         type: PROJECT_FAILED,
                         payload: payload || "",
                     });
@@ -282,7 +284,7 @@ async function ListenServingPod() {
     });
 }
 
-async function createProject(projectId: string) {
+async function createProject(projectId: string, jobId?: string) {
     const skipK8s = process.env.SKIP_K8S?.toLowerCase() === "true";
     console.log(`[${projectId}] SKIP_K8S = ${skipK8s}`);
 
@@ -294,6 +296,7 @@ async function createProject(projectId: string) {
             console.error(`[${projectId}] K8s pod creation failed:`, err);
             await publishEnvelope(OrchestatorToBackend, {
                 projectId,
+                jobId,
                 type: PROJECT_FAILED,
                 payload: String(err),
             });
@@ -308,6 +311,7 @@ async function createProject(projectId: string) {
     await publishEnvelope(OrchestatorToControl, {
         type: PROJECT_INITIALIZED,
         projectId,
+        jobId,
     });
     console.log(
         `[${projectId}] PROJECT_INITIALIZED sent to control, waiting for async response from serving`,
