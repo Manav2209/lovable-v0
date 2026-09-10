@@ -15,11 +15,17 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     const token = authHeader.split(" ")[1]!;
 
     try {
-        const decoded = jwt.verify(
-            token,
-            process.env.JWT_SECRET!,
-        ) as jwt.JwtPayload & { id?: string };
-        req.userId = decoded?.id;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET!, {
+            algorithms: ["HS256"],
+        }) as jwt.JwtPayload & { id?: string };
+        if (typeof decoded?.id !== "string") {
+            return res.status(401).json({
+                success: false,
+                data: null,
+                error: "UNAUTHORIZED",
+            });
+        }
+        req.userId = decoded.id;
         next();
     } catch {
         return res.status(401).json({

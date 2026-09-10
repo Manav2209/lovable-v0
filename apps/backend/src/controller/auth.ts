@@ -27,44 +27,48 @@ export const signup = async  (req : Request, res: Response) => {
         });
     }
 
-    const existingUser = await db
-        .select()
-        .from(users)
-        .where(eq(users.email, data.email))
-        .limit(1);
-
-    if (existingUser.length > 0) {
-        return res.status(400).json({
-        success: false,
-        data: null,
-        error: "EMAIL_ALREADY_EXISTS",
-        });
-    }
-
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
-    const [user] = await db
-        .insert(users)
-        .values({
-        email: data.email,
-        username: data.username,
-        password: hashedPassword,
-        })
-        .returning();
+    try {
+        const [user] = await db
+            .insert(users)
+            .values({
+            email: data.email,
+            username: data.username,
+            password: hashedPassword,
+            })
+            .returning();
 
-    if (!user) {
+        if (!user) {
+            return res.status(500).json({
+            success: false,
+            data: null,
+            error: "SIGNUP_FAILED",
+            });
+        }
+
+        return res.status(201).json({
+        success: true,
+        data: publicUser(user),
+        error: null,
+        });
+    } catch (err) {
+        const code = (err as { code?: string })?.code;
+        const message = (err as { message?: string })?.message ?? "";
+        if (code === "23505" || /unique constraint|duplicate key/i.test(message)) {
+            return res.status(409).json({
+            success: false,
+            data: null,
+            error: "EMAIL_ALREADY_EXISTS",
+            });
+        }
+        console.error("Signup failed:", err);
         return res.status(500).json({
         success: false,
         data: null,
         error: "SIGNUP_FAILED",
         });
     }
-
-    return res.status(201).json({
-        success: true,
-        data: publicUser(user),
-        error: null,
-    });
 }
 
 export const login = async (req: Request, res: Response) => {
@@ -106,6 +110,7 @@ export const login = async (req: Request, res: Response) => {
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET!, {
         expiresIn: TOKEN_TTL,
+        algorithm: "HS256",
     });
 
     return res.status(200).json({
