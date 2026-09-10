@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 type Waiter = {
+    id: string;
     resolve: (value: string) => void;
+    timer: ReturnType<typeof setTimeout>;
     expectedTypes?: string[];
 };
 
@@ -8,43 +12,56 @@ type Waiter = {
  * (spec-06 §1). Resolvers are keyed by `jobId` — not projectId — so concurrent
  * build/prompt/run operations for the same project each resolve with their own
  * matching response.
+ *
+ * Each waiter is tracked by a unique id so that timeout cleanup removes the
+ * correct waiter instead of blindly shifting the first one.
  */
 export class ResponseManager {
     private responses = new Map<string, Waiter[]>();
 
-    setChannel(key: string, waiter: Waiter) {
-        const list = this.responses.get(key) ?? [];
-        list.push(waiter);
-        this.responses.set(key, list);
-        console.log(`Set response channel for key ${key}`);
-    }
+    wait(
+        key: string,
+        timeoutMs: number,
+        expectedTypes?: string[],
+    ): Promise<string> {
+        const id = randomUUID();
 
-    cleanupChannel(key: string) {
-        const list = this.responses.get(key);
-        if (!list || list.length === 0) {
-            return;
-        }
-        list.shift();
-        if (list.length === 0) {
-            this.responses.delete(key);
-        } else {
+        return new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.removeWaiter(key, id);
+                console.log(
+                    `[responseManager] Waiter ${id.slice(0, 8)} timed out for key ${key}`,
+                );
+                reject(new Error("TIMEOUT"));
+            }, timeoutMs);
+
+            const waiter: Waiter = {
+                id,
+                resolve: (value: string) => {
+                    clearTimeout(timer);
+                    resolve(value);
+                },
+                timer,
+                expectedTypes,
+            };
+
+            const list = this.responses.get(key) ?? [];
+            list.push(waiter);
             this.responses.set(key, list);
-        }
-
-        console.log(`Cleaned up channel for key ${key}`);
-    }
-
-    getActiveChannelsCount() {
-        let count = 0;
-        for (const list of this.responses.values()) {
-            count += list.length;
-        }
-        return count;
+            console.log(
+                `[responseManager] Registered waiter ${id.slice(0, 8)} for key ${key}`,
+            );
+        });
     }
 
     resolve(key: string, value: string) {
         const list = this.responses.get(key);
-        if (!list || list.length === 0) return;
+        if (!list || list.length === 0) {
+            console.log(
+                `[responseManager] No waiter for key ${key} — late response dropped`,
+            );
+            return;
+        }
 
         let incomingType: string | undefined;
         try {
@@ -73,28 +90,33 @@ export class ResponseManager {
         } else {
             this.responses.set(key, list);
         }
+        console.log(
+            `[responseManager] Resolved waiter ${waiter!.id.slice(0, 8)} for key ${key} with type ${incomingType ?? "unknown"}`,
+        );
         waiter?.resolve(value);
     }
 
-    wait(
-        key: string,
-        timeoutMs: number,
-        expectedTypes?: string[],
-    ): Promise<string> {
-        return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.cleanupChannel(key);
-                reject(new Error("TIMEOUT"));
-            }, timeoutMs);
+    getActiveChannelsCount() {
+        let count = 0;
+        for (const list of this.responses.values()) {
+            count += list.length;
+        }
+        return count;
+    }
 
-            this.setChannel(key, {
-                expectedTypes,
-                resolve: (value: string) => {
-                    clearTimeout(timer);
-                    resolve(value);
-                },
-            });
-        });
+    private removeWaiter(key: string, waiterId: string) {
+        const list = this.responses.get(key);
+        if (!list) return;
+
+        const index = list.findIndex((w) => w.id === waiterId);
+        if (index === -1) return;
+
+        list.splice(index, 1);
+        if (list.length === 0) {
+            this.responses.delete(key);
+        } else {
+            this.responses.set(key, list);
+        }
     }
 }
 
