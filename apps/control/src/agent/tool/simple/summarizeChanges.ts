@@ -31,7 +31,6 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
 
         switch (toolName) {
             case "createFile":
-            case "writeMultipleFile":
             case "stitchApp":
                 if (args.filePath) {
                     filesCreated.push(args.filePath);
@@ -41,7 +40,6 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
                 break;
 
             case "updateFile":
-            case "lineReplace":
             case "replaceInFile":
             case "patchFile":
                 if (args.filePath) {
