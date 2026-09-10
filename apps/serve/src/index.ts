@@ -61,9 +61,15 @@ async function registerPreview(projectId: string, upstream: string) {
     }
 
     try {
+        const adminToken = process.env.INGRESS_ADMIN_TOKEN;
         const res = await fetch(`${ingressAdmin}/_ingress/register`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                ...(adminToken
+                    ? { Authorization: `Bearer ${adminToken}` }
+                    : {}),
+            },
             body: JSON.stringify({ projectId, slug, upstream }),
         });
         if (!res.ok) {

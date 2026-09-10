@@ -8,6 +8,7 @@ import {
     PROJECT_RUN_FAILED,
     ServingToOrchestrator,
     assertSafeProjectId,
+    sanitizeSubprocessEnv,
 } from "types";
 import { publishEnvelope } from "shared-redis";
 
@@ -15,22 +16,13 @@ const runningProcesses = new Map<string, ChildProcess>();
 /** Project ids whose current child is being replaced; their close must not emit RUN_FAILED. */
 const restartingProjects = new Set<string>();
 
-const SECRET_ENV_PATTERN =
-    /(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|JWT|DATABASE_URL|S3_API|PRIVATE|PRESIGN)/i;
-
 /**
- * Environment for spawned project processes. Strips cloud credentials and
- * database secrets so a prompt-injected or malicious generated app cannot
- * read or exfiltrate them.
+ * Environment for spawned project processes. Strips everything except the
+ * allow-list so a prompt-injected or malicious generated app cannot read or
+ * exfiltrate cloud credentials / database secrets.
  */
 function sanitizeServingEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of Object.keys(env)) {
-        if (SECRET_ENV_PATTERN.test(key)) {
-            delete env[key];
-        }
-    }
-    return env;
+    return sanitizeSubprocessEnv();
 }
 
 /** Resolves a path and guarantees it stays under `baseDir` (lexical). */

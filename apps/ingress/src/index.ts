@@ -1,4 +1,5 @@
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import {
     PreviewRegister,
     PREVIEW_REGISTER,
@@ -22,7 +23,25 @@ import {
 import { proxyRequest } from "./proxy";
 
 const PORT = Number(process.env.INGRESS_PORT || process.env.PORT || 8080);
+const BIND_HOST = process.env.INGRESS_BIND_HOST || "127.0.0.1";
 const DOMAIN = process.env.PREVIEW_DOMAIN || "preview.localhost";
+
+/**
+ * Constant-time check that the request carries `Authorization: Bearer <token>`
+ * matching INGRESS_ADMIN_TOKEN. Health stays open; every admin mutation is
+ * gated behind this so a stray container on the network cannot add routes.
+ */
+function isAuthorizedAdmin(req: http.IncomingMessage): boolean {
+    const expected = process.env.INGRESS_ADMIN_TOKEN;
+    if (!expected) return false;
+    const supplied = req.headers.authorization;
+    if (!supplied || !supplied.startsWith("Bearer ")) return false;
+    const want = Buffer.from(expected);
+    const got = Buffer.from(supplied.slice("Bearer ".length));
+    return (
+        want.length === got.length && timingSafeEqual(want, got)
+    );
+}
 
 function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
@@ -65,11 +84,19 @@ async function handleAdmin(
     }
 
     if (pathname === "/_ingress/routes" && req.method === "GET") {
+        if (!isAuthorizedAdmin(req)) {
+            sendJson(res, 401, { error: "UNAUTHORIZED" });
+            return true;
+        }
         sendJson(res, 200, { routes: listRoutes() });
         return true;
     }
 
     if (pathname === "/_ingress/register" && req.method === "POST") {
+        if (!isAuthorizedAdmin(req)) {
+            sendJson(res, 401, { error: "UNAUTHORIZED" });
+            return true;
+        }
         try {
             const body = (await readJsonBody(req)) as {
                 projectId?: string;
@@ -107,6 +134,10 @@ async function handleAdmin(
     }
 
     if (pathname === "/_ingress/unregister" && req.method === "POST") {
+        if (!isAuthorizedAdmin(req)) {
+            sendJson(res, 401, { error: "UNAUTHORIZED" });
+            return true;
+        }
         try {
             const body = (await readJsonBody(req)) as {
                 projectId?: string;
@@ -233,8 +264,8 @@ async function main() {
     }
 
     const server = createServer();
-    server.listen(PORT, "0.0.0.0", () => {
-        console.log(`[ingress] Listening on http://0.0.0.0:${PORT}`);
+    server.listen(PORT, BIND_HOST, () => {
+        console.log(`[ingress] Listening on http://${BIND_HOST}:${PORT}`);
         console.log(
             `[ingress] Preview hosts: http://{slug}.${DOMAIN}:${PORT}`,
         );
