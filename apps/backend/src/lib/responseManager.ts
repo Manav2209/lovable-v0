@@ -29,7 +29,7 @@ export class ResponseManager {
         return new Promise<string>((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.removeWaiter(key, id);
-                console.log(
+                console.warn(
                     `[responseManager] Waiter ${id.slice(0, 8)} timed out for key ${key}`,
                 );
                 reject(new Error("TIMEOUT"));
@@ -48,16 +48,13 @@ export class ResponseManager {
             const list = this.responses.get(key) ?? [];
             list.push(waiter);
             this.responses.set(key, list);
-            console.log(
-                `[responseManager] Registered waiter ${id.slice(0, 8)} for key ${key}`,
-            );
         });
     }
 
     resolve(key: string, value: string) {
         const list = this.responses.get(key);
         if (!list || list.length === 0) {
-            console.log(
+            console.warn(
                 `[responseManager] No waiter for key ${key} — late response dropped`,
             );
             return;
@@ -78,7 +75,7 @@ export class ResponseManager {
         });
 
         if (index === -1) {
-            console.log(
+            console.warn(
                 `[responseManager] Ignoring ${incomingType} for ${key} (no matching waiter)`,
             );
             return;
@@ -90,9 +87,6 @@ export class ResponseManager {
         } else {
             this.responses.set(key, list);
         }
-        console.log(
-            `[responseManager] Resolved waiter ${waiter!.id.slice(0, 8)} for key ${key} with type ${incomingType ?? "unknown"}`,
-        );
         waiter?.resolve(value);
     }
 

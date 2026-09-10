@@ -29,8 +29,15 @@ export const checkMissingPackage = tool(async (input: z.infer<typeof checkMissin
             ...packageJson.dependencies,
             ...packageJson.devDependencies,
         };
-        const missing = packages.filter((pkg) => !deps[pkg]);
-        return { missing, installed: packages.filter((pkg) => deps[pkg]) };
+        const missing = packages.filter(
+            (pkg) => !Object.prototype.hasOwnProperty.call(deps, pkg),
+        );
+        return {
+            missing,
+            installed: packages.filter((pkg) =>
+                Object.prototype.hasOwnProperty.call(deps, pkg),
+            ),
+        };
         } catch (error) {
         return { error: `Failed to check packages: ${(error as Error).message}` };
         }

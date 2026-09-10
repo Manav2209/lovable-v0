@@ -1,4 +1,4 @@
-import type { ResponseManager } from "./src/lib/responseManager";
+export {};
 
 declare global {
     namespace Express {
