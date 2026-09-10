@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { glob } from "glob";
-import { IGNORE_PATTERNS } from "./simple/getContext";
+import { IGNORE_PATTERNS } from "./simple/ignorePatterns";
 import { getProjectDir } from "./security";
 import { sendSSEMessage } from "../../sse";
 import type { WorkflowState } from "../graphs/workflow";

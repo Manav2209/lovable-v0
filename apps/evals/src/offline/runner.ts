@@ -101,8 +101,6 @@ export async function runCase(
                     maxFixAttempts: options.maxFixAttempts,
                     abortSignal: abortController.signal,
                     completed: false,
-                    messages: [],
-                    threadId: workspace.projectId,
                 }),
         ).then(({ value, traceId }) => ({
             ...value,

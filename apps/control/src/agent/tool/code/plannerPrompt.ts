@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { model } from "../../client";
+import { frozenModel } from "../../client";
 import { SYSTEM_PROMPTS } from "../../../prompt/systemPrompt";
 import { sendSSEMessage } from "../../../sse";
 import { parseJsonObject } from "../../json";
@@ -44,7 +44,7 @@ export async function planerNode(state: WorkflowState): Promise<Partial<Workflow
 
   try {
     let parsed: AgentPlan | undefined;
-    const structured = (model as { withStructuredOutput?: (schema: typeof agentPlanSchema) => { invoke: (input: unknown) => Promise<unknown> } }).withStructuredOutput?.(agentPlanSchema);
+    const structured = (frozenModel as { withStructuredOutput?: (schema: typeof agentPlanSchema) => { invoke: (input: unknown) => Promise<unknown> } }).withStructuredOutput?.(agentPlanSchema);
 
     if (structured) {
       try {
@@ -55,7 +55,7 @@ export async function planerNode(state: WorkflowState): Promise<Partial<Workflow
     }
 
     if (!parsed) {
-      const res = await model.invoke([{ role: "user", content: userContent }]);
+      const res = await frozenModel.invoke([{ role: "user", content: userContent }]);
       parsed = planFromUnknown(res.text);
     }
 
@@ -67,7 +67,6 @@ export async function planerNode(state: WorkflowState): Promise<Partial<Workflow
     return {
       plan: parsed.objective,
       agentPlan: parsed,
-      toolCalls: [],
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

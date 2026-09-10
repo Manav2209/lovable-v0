@@ -4,7 +4,7 @@ import { model } from "../client";
 import { SYSTEM_PROMPTS } from "../../prompt/systemPrompt";
 import { sendSSEMessage } from "../../sse";
 import { requireAgentRuntime } from "../runtime";
-import { codingAgentTools } from "../tool/codingTools";
+import { codingAgentTools, MUTATION_TOOLS, RETRIEVAL_TOOLS } from "../tool/registry";
 import type { WorkflowState } from "./workflow";
 import { emptyAgentStats, recordToolUse, type AgentStats } from "../agentStats";
 import { observe } from "../../observability/trace";
@@ -15,9 +15,6 @@ const MAX_RUNTIME_MS = Number(process.env.MAX_AGENT_RUNTIME_MS || 8 * 60_000);
 const STALL_REPEAT = 3;
 const MAX_TOOL_MESSAGE_CHARS = Number(process.env.MAX_TOOL_MESSAGE_CHARS || 16_000);
 const CONTEXT_BYTE_BUDGET = Number(process.env.CONTEXT_BYTE_BUDGET || 96_000);
-
-const RETRIEVAL_TOOLS = new Set(["listDir", "grepSearch", "readFile"]);
-const MUTATION_TOOLS = new Set(["createFile", "updateFile", "replaceInFile", "deleteFile"]);
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
 
@@ -116,7 +113,7 @@ export async function runReactLoop(
                 type: "react_complete",
                 message: `ReAct finished after ${stats.steps} step(s)`,
             });
-            return { toolResults, toolsExecuted: true, agentStats: stats };
+            return { toolResults, agentStats: stats };
         }
 
         for (let i = 0; i < calls.length; i++) {
@@ -134,7 +131,7 @@ export async function runReactLoop(
 
         for (const call of calls) {
             if (toolCalls >= MAX_TOOL_CALLS) {
-                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, toolsExecuted: true, agentStats: stats };
+                return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, agentStats: stats };
             }
 
             const signature = `${call.name}:${JSON.stringify(call.args)}`;
@@ -144,7 +141,6 @@ export async function runReactLoop(
                 return {
                     error: `Agent stalled repeating ${call.name}`,
                     toolResults,
-                    toolsExecuted: true,
                     agentStats: stats,
                 };
             }
@@ -260,7 +256,6 @@ export async function runReactLoop(
     return {
         error: `Exceeded MAX_AGENT_STEPS of ${maxSteps}`,
         toolResults,
-        toolsExecuted: true,
         agentStats: stats,
     };
 }

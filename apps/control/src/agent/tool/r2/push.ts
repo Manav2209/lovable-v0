@@ -9,7 +9,7 @@ import { sendSSEMessage } from "../../../sse";
 import { publishStreamEvent, isEvalMode } from "../../../events/sink";
 import { resolveSafePath } from "../security";
 import { ControlToServing } from "types";
-import { shouldIgnoreFile } from "../simple/getContext";
+import { shouldIgnoreFile } from "../simple/ignorePatterns";
 
 const BUCKET_NAME = process.env.BUCKET_NAME || "lovable";
 const UPLOAD_CONCURRENCY = 8;
@@ -30,7 +30,12 @@ function getAllFiles(dirPath: string, relativeTo: string = dirPath): string[] {
 
     for (const item of items) {
         const fullPath = path.join(dirPath, item);
-        const stat = fs.statSync(fullPath);
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(fullPath);
+        } catch {
+            continue;
+        }
 
         if (stat.isDirectory()) {
             files.push(...getAllFiles(fullPath, relativeTo));
