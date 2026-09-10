@@ -2,7 +2,6 @@ import { ChatGroq } from "@langchain/groq";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { MemorySaver } from "@langchain/langgraph";
 import "../observability/instrumentation";
 import { injectLangfuse } from "../observability/langfuse";
 
@@ -19,47 +18,43 @@ function resolveProvider(): LLMProvider {
     return "groq";
 }
 
+function buildModel(provider: LLMProvider, temperature: number): BaseChatModel {
+    if (provider === "google") {
+        return new ChatGoogleGenerativeAI({
+            apiKey: process.env.GOOGLE_API_KEY || "",
+            model: process.env.GOOGLE_MODEL || "gemini-2.5-flash",
+            temperature,
+        });
+    }
+    if (provider === "airouter") {
+        return new ChatOpenAI({
+            apiKey: process.env.AIROUTER_API_KEY || "",
+            model: process.env.AIROUTER_MODEL || "openai/gpt-4o-mini",
+            temperature,
+            configuration: {
+                baseURL:
+                    process.env.AIROUTER_BASE_URL ||
+                    "https://api.airouter.in/v1",
+            },
+        });
+    }
+    return new ChatGroq({
+        apiKey: process.env.GROQ_API_KEY || "",
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        temperature,
+    });
+}
+
 class LLMClient {
     private static instance: LLMClient;
     private _model: BaseChatModel;
+    private _frozen: BaseChatModel;
     private _provider: LLMProvider;
-    private _checkpointer: MemorySaver;
 
     private constructor() {
         this._provider = resolveProvider();
-
-        if (this._provider === "google") {
-            this._model = injectLangfuse(
-                new ChatGoogleGenerativeAI({
-                    apiKey: process.env.GOOGLE_API_KEY || "",
-                    model: process.env.GOOGLE_MODEL || "gemini-2.5-flash",
-                    temperature: 0.5,
-                }),
-            );
-        } else if (this._provider === "airouter") {
-            this._model = injectLangfuse(
-                new ChatOpenAI({
-                    apiKey: process.env.AIROUTER_API_KEY || "",
-                    model: process.env.AIROUTER_MODEL || "openai/gpt-4o-mini",
-                    temperature: 0.5,
-                    configuration: {
-                        baseURL:
-                            process.env.AIROUTER_BASE_URL ||
-                            "https://api.airouter.in/v1",
-                    },
-                }),
-            );
-        } else {
-            this._model = injectLangfuse(
-                new ChatGroq({
-                    apiKey: process.env.GROQ_API_KEY || "",
-                    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-                    temperature: 0.5,
-                }),
-            );
-        }
-
-        this._checkpointer = new MemorySaver();
+        this._model = injectLangfuse(buildModel(this._provider, 0.3));
+        this._frozen = injectLangfuse(buildModel(this._provider, 0));
     }
 
     public static getInstance(): LLMClient {
@@ -73,16 +68,16 @@ class LLMClient {
         return this._model;
     }
 
-    public get provider(): LLMProvider {
-        return this._provider;
+    public get frozenModel(): BaseChatModel {
+        return this._frozen;
     }
 
-    public get checkpointer(): MemorySaver {
-        return this._checkpointer;
+    public get provider(): LLMProvider {
+        return this._provider;
     }
 }
 
 export const llmClient = LLMClient.getInstance();
 
 export const model = llmClient.model;
-export const checkpointer = llmClient.checkpointer;
+export const frozenModel = llmClient.frozenModel;

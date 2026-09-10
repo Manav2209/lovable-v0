@@ -32,6 +32,7 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
         switch (toolName) {
             case "createFile":
             case "writeMultipleFile":
+            case "stitchApp":
                 if (args.filePath) {
                     filesCreated.push(args.filePath);
                 } else if (args.files && Array.isArray(args.files)) {
@@ -164,7 +165,6 @@ export async function summarizeChangesNode(
         };
 
         const contextToSave = {
-            ...state.context,
             lastExecution: {
                 timestamp: new Date().toISOString(),
                 userPrompt: state.prompt,
@@ -174,7 +174,7 @@ export async function summarizeChangesNode(
 
         await saveContext.invoke({
             context: contextToSave,
-            filePath: `${state.projectId}/context.json`,
+            filePath: "context.json",
         });
 
         sendSSEMessage(state.clientId, {

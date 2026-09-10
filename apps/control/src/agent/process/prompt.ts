@@ -50,8 +50,6 @@ export async function processPrompt(
             fixAttempts: 0,
             maxFixAttempts: Number(process.env.MAX_FIX_ATTEMPTS || 5),
             completed: false,
-            messages: [],
-            threadId: projectId,
           }),
       );
       finalState = { ...traced.value, traceId: traced.traceId ?? traced.value.traceId };
@@ -72,7 +70,7 @@ export async function processPrompt(
             result: finalState,
         });
 
-        const aiResponse = `Workflow completed: ${finalState.buildStatus}`;
+        const aiResponse = finalState.changeSummary?.summary ?? `Workflow completed: ${finalState.buildStatus}`;
 
         await saveConversationMemory(projectId, prompt, aiResponse);
 

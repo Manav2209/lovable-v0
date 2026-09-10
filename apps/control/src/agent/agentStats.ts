@@ -1,24 +1,7 @@
-export const READ_TOOL_NAMES = new Set([
-    "listFiles",
-    "searchFiles",
-    "readFile",
-    "listDir",
-    "grepSearch",
-]);
+import { MUTATION_TOOLS, RETRIEVAL_TOOLS } from "./tool/registry";
 
-export const MUTATION_TOOL_NAMES = new Set([
-    "createFile",
-    "updateFile",
-    "patchFile",
-    "replaceInFile",
-    "deleteFile",
-    "writeMultipleFile",
-    "lineReplace",
-    "addDependency",
-    "removeDependency",
-    "addShadcnComponent",
-    "renameFile",
-]);
+export const READ_TOOL_NAMES = RETRIEVAL_TOOLS;
+export const MUTATION_TOOL_NAMES = MUTATION_TOOLS;
 
 export type AgentStats = {
     steps: number;

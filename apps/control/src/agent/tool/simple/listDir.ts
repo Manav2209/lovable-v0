@@ -3,7 +3,7 @@ import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
 import { glob } from "glob";
-import { IGNORE_PATTERNS } from "./getContext";
+import { IGNORE_PATTERNS } from "./ignorePatterns";
 import { getProjectDir, resolveSafePath } from "../security";
 
 

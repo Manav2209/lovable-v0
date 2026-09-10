@@ -1,9 +1,7 @@
-import type { WorkflowState } from "../../graphs/workflow";
 import fs from "fs";
 import { tool } from "langchain";
 import path from "path";
 import * as z from "zod";
-import { sendSSEMessage } from "../../../sse";
 import { getProjectDir, resolveSafePath } from "../security";
 
 const saveContextInput = z.object({
@@ -32,22 +30,3 @@ export const saveContext = tool( async (input: z.infer<typeof saveContextInput>)
         schema: saveContextInput,
     },
 );
-
-export async function saveNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
-    sendSSEMessage(state.clientId, {
-        type: "saving",
-        message: "Saving context...",
-    });
-
-    await saveContext.invoke({
-        context: state.context,
-        filePath: "context.json",
-    });
-
-    sendSSEMessage(state.clientId, {
-        type: "context_saved",
-        message: "Context saved successfully",
-    });
-
-    return {};
-}

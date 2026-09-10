@@ -1,7 +1,7 @@
 import { tool } from "langchain";
 import * as z from "zod";
 import { SYSTEM_PROMPTS } from "../../../prompt/systemPrompt";
-import { model } from "../../client";
+import { frozenModel } from "../../client";
 import { sendSSEMessage } from "../../../sse";
 import { parseJsonObject } from "../../json";
 import type { WorkflowState } from "../../graphs/workflow";
@@ -18,7 +18,7 @@ export const checkUserGivenPrompt = tool(
     input: z.infer<typeof userGivenPromptSchema>,
   ): Promise<{ success: boolean; message: any; error?: string }> => {
     try {
-      const res = await model.invoke([
+      const res = await frozenModel.invoke([
         {
           role: "user",
           content:

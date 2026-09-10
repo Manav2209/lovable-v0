@@ -97,7 +97,10 @@ function buildStitchedApp(componentFiles: string[], srcDir: string): string {
     );
     const sections = componentFiles.filter((f) => !pageLike.includes(f));
 
-    const imports: string[] = [`import './App.css'`];
+    const imports: string[] = [];
+    if (fs.existsSync(path.join(srcDir, "App.css"))) {
+        imports.push(`import './App.css'`);
+    }
     const entries: { name: string; props: string[]; file: string }[] = [];
 
     for (const file of [...pageLike, ...sections]) {

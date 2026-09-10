@@ -6,10 +6,10 @@ import path from "path";
 import * as z from "zod";
 import type { WorkflowState } from "../../graphs/workflow";
 import { sendSSEMessage } from "../../../sse";
-import { publishStreamEvent } from "../../../events/sink";
+import { publishStreamEvent, isEvalMode } from "../../../events/sink";
 import { resolveSafePath } from "../security";
 import { ControlToServing } from "types";
-import { shouldIgnoreFile } from "../simple/getContext";
+import { shouldIgnoreFile } from "../simple/ignorePatterns";
 
 const BUCKET_NAME = process.env.BUCKET_NAME || "lovable";
 const UPLOAD_CONCURRENCY = 8;
@@ -30,7 +30,12 @@ function getAllFiles(dirPath: string, relativeTo: string = dirPath): string[] {
 
     for (const item of items) {
         const fullPath = path.join(dirPath, item);
-        const stat = fs.statSync(fullPath);
+        let stat: fs.Stats;
+        try {
+            stat = fs.statSync(fullPath);
+        } catch {
+            continue;
+        }
 
         if (stat.isDirectory()) {
             files.push(...getAllFiles(fullPath, relativeTo));
@@ -98,6 +103,21 @@ export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) =
 
         if (files.length === 0) {
             throw new Error("No files found in project directory after filtering");
+        }
+
+        if (isEvalMode()) {
+            console.log(
+                `[pushFilesToR2] eval mode — skipping R2 upload (${files.length} files)`,
+            );
+            return {
+                success: true,
+                message: `Eval mode: skipped R2 push for project ${projectId}`,
+                projectId,
+                bucketName,
+                filesUploaded: files.length,
+                filesFailed: 0,
+                failedFiles: [],
+            };
         }
 
         console.log(
