@@ -43,9 +43,10 @@ export const IGNORE_PATTERNS = [
   "next",
   ".nx",
   "nx",
+  "context.json",
 ];
 
-function shouldIgnoreFile(filePath: string): boolean {
+export function shouldIgnoreFile(filePath: string): boolean {
     const normalizedPath = filePath.replace(/\\/g, '/');
 
     return IGNORE_PATTERNS.some(pattern => {

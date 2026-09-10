@@ -1,22 +1,62 @@
-# redis.yaml
+# Redis for lovable-v0 — K8s manifest
+# Usage: kubectl apply -f redis.yaml
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: redis }
+metadata:
+  name: redis
+  labels:
+    app: redis
 spec:
   replicas: 1
-  selector: { matchLabels: { app: redis } }
+  selector:
+    matchLabels:
+      app: redis
   template:
-    metadata: { labels: { app: redis } }
+    metadata:
+      labels:
+        app: redis
     spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          ports: [{ containerPort: 6379 }]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+          # For production with persistence, replace with a PVC:
+          # persistentVolumeClaim:
+          #   claimName: redis-data
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: redis }
+metadata:
+  name: redis
+  labels:
+    app: redis
 spec:
-  selector: { app: redis }
+  selector:
+    app: redis
   ports:
-    - { port: 6379, targetPort: 6379 }
+    - port: 6379
+      targetPort: 6379

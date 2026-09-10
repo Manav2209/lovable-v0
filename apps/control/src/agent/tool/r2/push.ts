@@ -9,10 +9,14 @@ import { sendSSEMessage } from "../../../sse";
 import { publishStreamEvent } from "../../../events/sink";
 import { resolveSafePath } from "../security";
 import { ControlToServing } from "types";
+import { shouldIgnoreFile } from "../simple/getContext";
+
+const BUCKET_NAME = process.env.BUCKET_NAME || "lovable";
+const UPLOAD_CONCURRENCY = 8;
 
 const pushCodeInput = z.object({
     projectId: z.string().min(1, "Project ID is required"),
-    bucketName: z.string().min(1, "Bucket name is required"),
+    bucketName: z.string().min(1, "Bucket name is required").optional(),
 });
 
 function getAllFiles(dirPath: string, relativeTo: string = dirPath): string[] {
@@ -29,17 +33,56 @@ function getAllFiles(dirPath: string, relativeTo: string = dirPath): string[] {
         const stat = fs.statSync(fullPath);
 
         if (stat.isDirectory()) {
-        files.push(...getAllFiles(fullPath, relativeTo));
+            files.push(...getAllFiles(fullPath, relativeTo));
         } else {
-        files.push(path.relative(relativeTo, fullPath));
+            files.push(path.relative(relativeTo, fullPath));
         }
     }
 
     return files;
 }
 
+async function uploadBatch(
+    files: string[],
+    projectDir: string,
+    projectId: string,
+    bucket: string,
+): Promise<{ uploaded: number; failed: string[] }> {
+    let uploaded = 0;
+    const failed: string[] = [];
+
+    for (let i = 0; i < files.length; i += UPLOAD_CONCURRENCY) {
+        const batch = files.slice(i, i + UPLOAD_CONCURRENCY);
+        const results = await Promise.allSettled(
+            batch.map(async (filePath) => {
+                const fullFilePath = path.join(projectDir, filePath);
+                const fileContent = fs.readFileSync(fullFilePath);
+                const r2Key = `${projectId}/${filePath}`;
+                await putObject({
+                    Bucket: bucket,
+                    Key: r2Key,
+                    Body: fileContent,
+                    ContentType: getContentType(filePath),
+                });
+                return filePath;
+            }),
+        );
+        for (let j = 0; j < results.length; j++) {
+            const r = results[j];
+            if (r.status === "fulfilled") {
+                uploaded++;
+            } else {
+                console.error(`Failed to upload ${batch[j]}:`, r.reason);
+                failed.push(batch[j]);
+            }
+        }
+    }
+
+    return { uploaded, failed };
+}
+
 export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) => {
-    const { projectId, bucketName = "elbavol" } = pushCodeInput.parse(input);
+    const { projectId, bucketName = BUCKET_NAME } = pushCodeInput.parse(input);
 
     try {
         const sharedDir = process.env.SHARED_DIR || "/app/shared";
@@ -49,54 +92,46 @@ export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) =
             throw new Error(`Project directory ${projectDir} does not exist`);
         }
 
-        const files = getAllFiles(projectDir);
+        const allFiles = getAllFiles(projectDir);
+        const files = allFiles.filter((f) => !shouldIgnoreFile(f));
 
         if (files.length === 0) {
-            throw new Error("No files found in project directory");
+            throw new Error("No files found in project directory after filtering");
         }
 
-        let uploadedCount = 0;
+        console.log(
+            `[pushFilesToR2] ${files.length} files to upload (${allFiles.length} total, ${allFiles.length - files.length} filtered out)`,
+        );
 
-        for (const filePath of files) {
-            try {
-            const fullFilePath = path.join(projectDir, filePath);
-            const fileContent = fs.readFileSync(fullFilePath);
-
-            const r2Key = `${projectId}/${filePath}`;
-
-            await putObject({
-                Bucket: bucketName,
-                Key: r2Key,
-                Body: fileContent,
-                ContentType: getContentType(filePath),
-            });
-
-            uploadedCount++;
-            } catch (error) {
-            console.error(`Failed to upload ${filePath}:`, error);
-            }
-        }
+        const { uploaded, failed } = await uploadBatch(
+            files,
+            projectDir,
+            projectId,
+            bucketName,
+        );
 
         const newObject = {
             projectId,
             bucketName,
             status: "code_pushed",
             timestamp: new Date().toISOString(),
-            filesUploaded: uploadedCount,
+            filesUploaded: uploaded,
+            filesFailed: failed.length,
         };
-
 
         await publishStreamEvent(ControlToServing, {
             key: projectId,
             value: JSON.stringify(newObject)
-        }, { projectId })
+        }, { projectId });
 
         return {
-            success: true,
-            message: `Successfully pushed ${uploadedCount} files to R2 for project ${projectId}`,
+            success: failed.length === 0,
+            message: `Pushed ${uploaded} files to R2 for project ${projectId}${failed.length > 0 ? ` (${failed.length} failed)` : ""}`,
             projectId,
             bucketName,
-            filesUploaded: uploadedCount,
+            filesUploaded: uploaded,
+            filesFailed: failed.length,
+            failedFiles: failed,
             newObject,
         };
     } catch (error) {
@@ -110,8 +145,8 @@ export const pushFilesToR2 = tool(async (input: z.infer<typeof pushCodeInput>) =
             bucketName,
             error: errorMessage,
         };
-        }
-    },
+    }
+},
     {
         name: "pushFilesToR2",
         description:
@@ -150,17 +185,20 @@ export async function pushNode(state: WorkflowState): Promise<Partial<WorkflowSt
         message: "Pushing to storage...",
     });
 
-    await pushFilesToR2.invoke({
+    const result = await pushFilesToR2.invoke({
         projectId: state.projectId,
-        bucketName: "elbavol",
     });
 
     sendSSEMessage(
         state.clientId, {
         type: "pushed",
-        message: "Pushed to storage",
+        message: result.success ? "Pushed to storage" : "Push failed",
     }
     );
+
+    if (!result.success) {
+        return { error: result.error || result.message };
+    }
 
     return {};
 }

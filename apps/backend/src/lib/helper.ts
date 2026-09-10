@@ -59,6 +59,8 @@ export async function createTitle(initialPrompt: string): Promise<string> {
     return response.text();
 }
 
+import { randomUUID } from "node:crypto";
+
 export function createRandomJobId() {
-    return Math.random().toString() + Math.random().toString();
+    return randomUUID();
 }
