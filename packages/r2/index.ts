@@ -65,11 +65,32 @@ export async function listBuckets(
 export async function listObjects(
     params: ListObjectsV2CommandInput,
 ): Promise<ListObjectsV2CommandOutput> {
-    const command = new ListObjectsV2Command(params);
+    // R2/S3 returns at most 1000 keys per ListObjectsV2 call. Loop on
+    // ContinuationToken so consumers never silently truncate past 1000 objects.
+    const contents: NonNullable<ListObjectsV2CommandOutput["Contents"]> = [];
+    const commonPrefixes: NonNullable<ListObjectsV2CommandOutput["CommonPrefixes"]> = [];
+    let continuationToken: string | undefined = params.ContinuationToken;
 
-    const response = await S3.send(command);
-    
-    return response;
+    do {
+        const command = new ListObjectsV2Command({
+            ...params,
+            ContinuationToken: continuationToken,
+        });
+        const response = await S3.send(command);
+        if (response.Contents) contents.push(...response.Contents);
+        if (response.CommonPrefixes) commonPrefixes.push(...response.CommonPrefixes);
+
+        if (!response.IsTruncated || !response.NextContinuationToken) {
+            return {
+                ...response,
+                Contents: contents,
+                CommonPrefixes: commonPrefixes,
+            };
+        }
+        continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+
+    return { $metadata: {}, Contents: contents, CommonPrefixes: commonPrefixes };
 }
 
 export async function getObject(

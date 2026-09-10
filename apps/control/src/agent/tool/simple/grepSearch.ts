@@ -26,6 +26,9 @@ export const grepSearch = tool(
         if (pattern.includes("..")) {
             return { success: false, error: `Invalid search pattern: "${pattern}"`, matches: [] };
         }
+        if (pattern.length > 200) {
+            return { success: false, error: `Search pattern too long (${pattern.length} chars, max 200)`, matches: [] };
+        }
 
         try {
             const globPatternToUse = globPattern || "**/*";
@@ -36,7 +39,12 @@ export const grepSearch = tool(
                 ignore: IGNORE_PATTERNS,
             });
 
+            // Guard against LLM-supplied catastrophic-backtracking patterns
+            // (ReDoS): bound the total time spent matching so a pathological
+            // regex cannot block the single-threaded agent process.
             const regex = new RegExp(pattern, "i");
+            const matchBudgetMs = 2000;
+            const matchStarted = Date.now();
             const results: Array<{ file: string; line: number; content: string; match: string }> = [];
             const maxResults = 200;
 
@@ -57,6 +65,15 @@ export const grepSearch = tool(
 
                         const line = lines[i];
                         if (!line) continue;
+
+                        if ((i & 127) === 0 && Date.now() - matchStarted > matchBudgetMs) {
+                            return {
+                                success: false,
+                                error: "Search pattern matched too slowly (possible ReDoS); simplify the regex or narrow the glob",
+                                matches: results,
+                                truncated: true,
+                            };
+                        }
 
                         const match = line.match(regex);
 

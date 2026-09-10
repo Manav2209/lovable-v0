@@ -7,6 +7,10 @@ import { RedisManager } from "shared-redis";
  */
 
 const MEMORY_PREFIX = "lovable:memory";
+/** Memory entries expire after 30 days so Redis keys never grow unbounded. */
+const MEMORY_TTL_SECONDS = 60 * 60 * 24 * 30;
+/** Cap on the number of memory entries handed back to consumers. */
+const MEMORY_MAX_ENTRIES = 20;
 
 function memoryKey(projectId: string, key: string): string {
     return `${MEMORY_PREFIX}:${projectId}:${key}`;
@@ -38,7 +42,7 @@ export async function getProjectMemories(projectId: string): Promise<any[]> {
                 [...fallbackStore.entries()]
                     .filter(([k]) => k.startsWith(prefix))
                     .map(([, v]) => v),
-            );
+            ).slice(-MEMORY_MAX_ENTRIES);
         }
 
         const client = await RedisManager.getWriter();
@@ -52,7 +56,7 @@ export async function getProjectMemories(projectId: string): Promise<any[]> {
         if (keys.length === 0) return [];
 
         const values = await client.mGet(keys);
-        return sortByTimestamp(
+        const sorted = sortByTimestamp(
             (values ?? [])
                 .filter((v): v is string => Boolean(v))
                 .map((v) => {
@@ -63,6 +67,7 @@ export async function getProjectMemories(projectId: string): Promise<any[]> {
                     }
                 }),
         );
+        return sorted.slice(-MEMORY_MAX_ENTRIES);
     } catch (error) {
         console.error("Error retrieving memories:", error);
         return [];
@@ -81,7 +86,11 @@ export async function saveProjectMemory(
         }
 
         const client = await RedisManager.getWriter();
-        await client.set(memoryKey(projectId, key), JSON.stringify(value));
+        await client.set(
+            memoryKey(projectId, key),
+            JSON.stringify(value),
+            { EX: MEMORY_TTL_SECONDS },
+        );
     } catch (error) {
         console.error("Error saving memory:", error);
     }

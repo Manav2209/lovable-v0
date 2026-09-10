@@ -106,14 +106,42 @@ export class RedisManager {
     }
 
     public static async getWriter(): Promise<RedisClientType> {
-        if (!this.writer) {
-            this.writer = createClient(this.getOptions());
-            await this.writer.connect();
-            this.writer.on("error", (err) =>
-                console.error("[Redis Writer]", err),
-            );
+        if (this.writer && this.writer.isOpen) {
+            return this.writer;
         }
-        return this.writer;
+
+        let w: RedisClientType | null = null;
+
+        if (this.connecting.has("writer")) {
+            await this.connecting.get("writer");
+            w = this.writer;
+            if (w && w.isOpen) {
+                return w;
+            }
+        }
+
+        // Attach the error listener BEFORE connect() so a connection-phase
+        // failure surfaces as a handled log, not an unhandled rejection.
+        w = createClient(this.getOptions());
+        w.on("error", (err) => console.error("[Redis Writer]", err));
+        this.writer = w;
+
+        const connectPromise = w.connect().then(
+            () => undefined,
+            (err) => {
+                // Do not cache a half-open client — let the next caller retry.
+                if (this.writer === w) this.writer = null;
+                throw err;
+            },
+        );
+        this.connecting.set("writer", connectPromise);
+
+        try {
+            await connectPromise;
+            return w;
+        } finally {
+            this.connecting.delete("writer");
+        }
     }
 
     public static async getReader(role: RedisRole): Promise<RedisClientType> {
