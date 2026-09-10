@@ -13,6 +13,8 @@ const MAX_AGENT_STEPS = Number(process.env.MAX_AGENT_STEPS || 20);
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || 40);
 const MAX_RUNTIME_MS = Number(process.env.MAX_AGENT_RUNTIME_MS || 8 * 60_000);
 const STALL_REPEAT = 3;
+const MAX_TOOL_MESSAGE_CHARS = Number(process.env.MAX_TOOL_MESSAGE_CHARS || 16_000);
+const CONTEXT_BYTE_BUDGET = Number(process.env.CONTEXT_BYTE_BUDGET || 96_000);
 
 const RETRIEVAL_TOOLS = new Set(["listDir", "grepSearch", "readFile"]);
 const MUTATION_TOOLS = new Set(["createFile", "updateFile", "replaceInFile", "deleteFile"]);
@@ -71,6 +73,8 @@ export async function runReactLoop(
     ];
 
     const toolResults: unknown[] = [...(state.toolResults || [])];
+    const toolMessageIndexes: { tool: string; index: number }[] = [];
+    let contextBytes = 0;
     let toolCalls = 0;
     const stall: string[] = [];
     const stats: AgentStats = emptyAgentStats();
@@ -113,6 +117,17 @@ export async function runReactLoop(
                 message: `ReAct finished after ${stats.steps} step(s)`,
             });
             return { toolResults, toolsExecuted: true, agentStats: stats };
+        }
+
+        for (let i = 0; i < calls.length; i++) {
+            const call = calls[i]!;
+            if (!call.id) {
+                call.id = `missing_${call.name}_${stepNumber}_${i}`;
+                const rtc = (response as { tool_calls?: Array<Record<string, unknown>> }).tool_calls;
+                if (Array.isArray(rtc) && rtc[i] && typeof rtc[i] === "object") {
+                    rtc[i]!.id = call.id;
+                }
+            }
         }
 
         messages.push(response);
@@ -213,12 +228,32 @@ export async function runReactLoop(
                 toolName: call.name,
             });
 
+            const rawContent = JSON.stringify(toolResult);
+            const toolContent =
+                rawContent.length > MAX_TOOL_MESSAGE_CHARS
+                    ? `${rawContent.slice(0, MAX_TOOL_MESSAGE_CHARS)}... [tool output truncated at ${MAX_TOOL_MESSAGE_CHARS} chars]`
+                    : rawContent;
+
             messages.push(
                 new ToolMessage({
-                    content: JSON.stringify(toolResult),
+                    content: toolContent,
                     tool_call_id: call.id || call.name,
                 }),
             );
+            toolMessageIndexes.push({ tool: call.name, index: messages.length - 1 });
+            contextBytes += toolContent.length;
+
+            if (contextBytes > CONTEXT_BYTE_BUDGET) {
+                for (const meta of toolMessageIndexes) {
+                    if (contextBytes <= CONTEXT_BYTE_BUDGET) break;
+                    const entry = messages[meta.index] as unknown as { content?: string } | undefined;
+                    if (entry && typeof entry.content === "string" && entry.content.length > 60) {
+                        contextBytes -= entry.content.length;
+                        entry.content = JSON.stringify({ omitted: true, tool: meta.tool });
+                        contextBytes += entry.content.length;
+                    }
+                }
+            }
         }
     }
 

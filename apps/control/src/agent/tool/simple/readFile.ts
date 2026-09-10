@@ -10,6 +10,8 @@ const readFileInput = z.object({
     endLine: z.number().optional().describe("Ending line number (1-indexed)"),
 });
 
+const MAX_READ_CHARS = 40_000;
+
 export const readFile = tool(async (input: z.infer<typeof readFileInput>) => {
     const { filePath, startLine, endLine } = readFileInput.parse(input);
     const fullPath = resolveSafePath(getProjectDir(), filePath);
@@ -32,25 +34,37 @@ export const readFile = tool(async (input: z.infer<typeof readFileInput>) => {
                 });
             }
 
-            const selectedLines = lines.slice(start, end);
+            let selectedLines = lines.slice(start, end).join("\n");
+            const rangeTruncated = selectedLines.length > MAX_READ_CHARS;
+            if (rangeTruncated) {
+                selectedLines = `${selectedLines.slice(0, MAX_READ_CHARS)}\n... [truncated: ${selectedLines.length} chars returned; use a narrower startLine/endLine range]`;
+            }
             return toolOk(`Read ${filePath} lines ${startLine || 1}-${endLine || totalLines}`, {
                 data: {
-                    content: selectedLines.join("\n"),
+                    content: selectedLines,
                     hash,
                     totalLines,
-                    returnedLines: selectedLines.length,
+                    returnedLines: selectedLines.split("\n").length,
                     lineRange: `${startLine || 1}-${endLine || totalLines}`,
                     sizeBytes: stats.size,
+                    truncated: rangeTruncated,
                 },
             });
         }
 
+        let output = content;
+        const truncated = output.length > MAX_READ_CHARS;
+        if (truncated) {
+            output = `${output.slice(0, MAX_READ_CHARS)}\n... [truncated: ${content.length} chars total; use startLine/endLine to read specific ranges]`;
+        }
+
         return toolOk(`Read ${filePath}`, {
             data: {
-                content,
+                content: output,
                 hash,
                 totalLines,
                 sizeBytes: stats.size,
+                truncated,
             },
         });
     } catch (error) {

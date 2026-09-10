@@ -4,10 +4,8 @@ import { planerNode } from "../tool/code/plannerPrompt";
 import { collectWorkspaceFactsNode } from "../tool/templateFacts";
 import { validateNode } from "../tool/code/validateBuild";
 import { pushNode } from "../tool/r2/push";
-import { saveNode } from "../tool/simple/saveContext";
 import { runNode } from "../tool/code/buildSource";
 import { summarizeChangesNode } from "../tool/simple/summarizeChanges";
-import { stitchAppNode } from "../tool/code/stitchApp";
 import { runReactLoop } from "./toolLoop";
 import { emptyAgentStats, mergeAgentStats, type AgentStats } from "../agentStats";
 import { observe } from "../../observability/trace";
@@ -17,8 +15,6 @@ export interface WorkflowState {
     projectId: string;
     prompt: string;
     clientId: string;
-    analysis?: any;
-    enhancedPrompt?: string;
     plan?: string;
     agentPlan?: {
         objective: string;
@@ -28,8 +24,6 @@ export interface WorkflowState {
     };
     templateFacts?: unknown;
     fileTree?: string;
-    toolCalls?: any[];
-    context?: any;
     previousContext?: any;
     toolResults?: any[];
     buildStatus?: "pending" | "success" | "errors" | "tested";
@@ -41,11 +35,6 @@ export interface WorkflowState {
     abortSignal?: AbortSignal;
     completed: boolean;
     error?: string;
-    messages: Array<{ role: string; content: string }>;
-    threadId: string;
-    toolsExecuted?: boolean;
-    fixesApplied?: boolean;
-    noFixesAvailable?: boolean;
     changeSummary?: {
         filesCreated: string[];
         filesModified: string[];
@@ -73,17 +62,17 @@ async function finishSuccess(state: WorkflowState): Promise<WorkflowState> {
         message: "Build passed, persisting workspace and notifying serve",
     });
 
+    const summaryResult = await summarizeChangesNode(state);
+    state = { ...state, ...summaryResult };
+
     const pushResult = await pushNode(state);
+    if (pushResult.error) {
+        return { ...state, ...pushResult, completed: false };
+    }
     state = { ...state, ...pushResult };
 
-    const saveResult = await saveNode(state);
-    state = { ...state, ...saveResult };
-
     const runResult = await runNode(state);
-    state = { ...state, ...runResult };
-
-    const summaryResult = await summarizeChangesNode(state);
-    return { ...state, ...summaryResult };
+    return { ...state, ...runResult };
 }
 
 export async function executeWorkflow(initialState: WorkflowState): Promise<WorkflowState> {
@@ -141,12 +130,6 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
         };
         if (state.error) {
             throw new Error(state.error);
-        }
-
-        const stitchResult = await stitchAppNode(state);
-        state = { ...state, ...stitchResult };
-        if ((stitchResult.toolResults || []).some((r: { toolCall?: { tool?: string } }) => r.toolCall?.tool === "stitchApp")) {
-            state.agentStats = mergeAgentStats(state.agentStats ?? emptyAgentStats(), { stitchInvoked: true });
         }
 
         const buildStarted = Date.now();
@@ -207,13 +190,14 @@ export async function executeWorkflow(initialState: WorkflowState): Promise<Work
                 },
                 async () => {
                     const repair = await runReactLoop(state, diagnostics, MAX_REPAIR_STEPS);
+                    const repairError = repair.error;
                     state = {
                         ...state,
                         ...repair,
-                        error: undefined,
+                        error: repairError,
                         agentStats: mergeAgentStats(state.agentStats ?? emptyAgentStats(), repair.agentStats ?? {}),
                     };
-                    if (state.error) return repair;
+                    if (repairError) return repair;
                     const revalidateStarted = Date.now();
                     const revalidate = await observe(
                         "Build",

@@ -19,7 +19,7 @@ import path from "path";
 import { buildProjectAndNotifyToRun } from "./agent/tool/code/buildSource";
 import { resolveSafePath } from "./agent/tool/security";
 import { processPrompt } from "./agent";
-import { startSSEServer } from "./sse";
+import { startSSEServer, closeSSEServer } from "./sse";
 import {
     RedisManager,
     publishEnvelope,
@@ -274,6 +274,7 @@ async function ListenServing() {
 async function shutdown(signal: string) {
     console.log(`Received ${signal}. Shutting down gracefully...`);
     try {
+        closeSSEServer();
         await RedisManager.quitAll();
         console.log("All Redis connections closed.");
     } catch (err) {
