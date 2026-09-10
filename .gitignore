@@ -39,3 +39,6 @@ yarn-error.log*
 
 # Generated per-project workspaces (agent sandboxes). Never commit or push.
 shared/
+
+# Local smoke test docs (not for push)
+specs/smoke-test-behavior.md
