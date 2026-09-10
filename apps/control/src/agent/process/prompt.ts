@@ -10,7 +10,7 @@ export async function processPrompt(
   jobId: string | undefined,
   prompt: string,
 ): Promise<void> {
-  console.log(`Starting agent processing for project ${projectId}: ${prompt}`);
+  console.log(`Starting agent processing for project ${projectId}`);
 
   const clientIdUsed = projectId;
 

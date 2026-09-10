@@ -168,10 +168,16 @@ export async function registerHostIngressRoute(
     const slug = toPreviewSlug(projectId);
     const admin =
         process.env.HOST_INGRESS_ADMIN_URL || "http://127.0.0.1:8080";
+    const adminToken = process.env.INGRESS_ADMIN_TOKEN;
     try {
         const res = await fetch(`${admin}/_ingress/register`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                ...(adminToken
+                    ? { Authorization: `Bearer ${adminToken}` }
+                    : {}),
+            },
             body: JSON.stringify({ projectId, slug, upstream: resolved }),
         });
         if (!res.ok) {

@@ -84,7 +84,11 @@ async function ListenBackend() {
                 return;
             }
 
-            console.log(payload);
+            console.log("[orch] Backend message:", {
+                type,
+                projectId: payload.projectId,
+                jobId: payload.jobId,
+            });
             const { projectId, prompt, jobId } = payload;
 
             switch (type) {

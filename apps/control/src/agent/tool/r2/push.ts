@@ -67,13 +67,14 @@ async function uploadBatch(
                 return filePath;
             }),
         );
-        for (let j = 0; j < results.length; j++) {
-            const r = results[j];
+        for (const [j, r] of results.entries()) {
+            const filePath = batch[j];
+            if (!filePath) continue;
             if (r.status === "fulfilled") {
                 uploaded++;
             } else {
-                console.error(`Failed to upload ${batch[j]}:`, r.reason);
-                failed.push(batch[j]);
+                console.error(`Failed to upload ${filePath}:`, r.reason);
+                failed.push(filePath);
             }
         }
     }

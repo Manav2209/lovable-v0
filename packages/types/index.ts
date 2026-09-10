@@ -66,5 +66,39 @@ export function assertSafeProjectId(projectId: string): string {
     return projectId;
 }
 
+/**
+ * Environment variables allowed to leak into subprocesses (project dev
+ * servers, agent-run commands). Allow-listed instead of deny-listed so a
+ * newly introduced credential or database URL can never silently pass
+ * through to a prompt-injected or malicious generated app.
+ */
+export const SUBPROCESS_ENV_ALLOW_LIST: ReadonlySet<string> = new Set([
+    "PATH",
+    "HOME",
+    "NODE_ENV",
+    "TMPDIR",
+    "PORT",
+    "HOST",
+    "PWD",
+    "LANG",
+    "INIT_CWD",
+]);
+
+/** Builds the subprocess env from the allow-list plus `npm_config_*`, `VITE_*`. */
+export function sanitizeSubprocessEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+        if (!value) continue;
+        if (
+            SUBPROCESS_ENV_ALLOW_LIST.has(key) ||
+            key.startsWith("npm_config_") ||
+            key.startsWith("VITE_")
+        ) {
+            env[key] = value;
+        }
+    }
+    return env;
+}
+
 export * from "./preview";
 

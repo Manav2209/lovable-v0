@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { spawn, type ChildProcess } from "node:child_process";
+import { sanitizeSubprocessEnv as sharedSanitizeSubprocessEnv } from "types";
 import { getAgentRuntime } from "../runtime";
 
 /**
@@ -60,18 +61,13 @@ export const SECRET_ENV_PATTERN =
     /(?:API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|JWT|DATABASE_URL|S3_API|PRIVATE|PRESIGN)/i;
 
 /**
- * Environment handed to subprocesses launched by the agent. Cloud credentials
- * and database secrets are stripped so a prompt-injected command cannot read
- * or exfiltrate them.
+ * Environment handed to subprocesses launched by the agent. Allow-listed
+ * instead of deny-listed: only PATH, HOME, NODE_ENV, TMPDIR, PORT, HOST,
+ * PWD, LANG, INIT_CWD and `npm_config_*` / `VITE_*` pass through, so a
+ * newly added cloud credential can never reach a subprocess.
  */
 export function sanitizeSubprocessEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const key of Object.keys(env)) {
-        if (SECRET_ENV_PATTERN.test(key)) {
-            delete env[key];
-        }
-    }
-    return env;
+    return sharedSanitizeSubprocessEnv();
 }
 
 export interface ProcessOptions {

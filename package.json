@@ -2,6 +2,7 @@
   "name": "lovable",
   "private": true,
   "scripts": {
+    "preinstall": "npx only-allow bun",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
@@ -20,10 +21,5 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ],
-  "dependencies": {
-    "@prisma/client": "^7.3.0",
-    "e2b": "^2.11.1",
-    "prisma": "^7.3.0"
-  }
+  ]
 }

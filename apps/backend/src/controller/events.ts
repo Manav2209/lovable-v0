@@ -40,10 +40,10 @@ async function resolveIdentity(
 
     if (!token) return null;
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-            id?: string;
-        };
-        if (!decoded.id) return null;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET!, {
+            algorithms: ["HS256"],
+        }) as { id?: unknown };
+        if (typeof decoded.id !== "string") return null;
         return { userId: decoded.id };
     } catch {
         return null;
