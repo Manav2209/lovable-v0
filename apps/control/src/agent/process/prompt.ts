@@ -1,6 +1,6 @@
 import { sendSSEMessage, getProjectSSEUrl } from "../../sse";
 import { executeMainFlow } from "../graphs/main";
-import { getProjectMemories, saveConversationMemory } from "../../memory";
+import { getProjectMemories, saveChangeSummary, saveConversationMemory } from "../../memory";
 import { publishStreamEvent } from "../../events/sink";
 import { ControlToOrchestrator, PROMPT_RESPONSE } from "types";
 import { traceAgentRun } from "../../observability/langfuse";
@@ -73,6 +73,7 @@ export async function processPrompt(
         const aiResponse = finalState.changeSummary?.summary ?? `Workflow completed: ${finalState.buildStatus}`;
 
         await saveConversationMemory(projectId, prompt, aiResponse);
+        await saveChangeSummary(projectId, prompt, finalState.changeSummary);
 
         console.log(`Agent completed successfully for project ${projectId}`);
     } else {

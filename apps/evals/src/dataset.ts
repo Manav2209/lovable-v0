@@ -14,6 +14,12 @@ export interface EvalCase {
     maxFixAttempts?: number;
     /** Overlay files from apps/evals/fixtures/<name> after seeding the template. */
     fixture?: string;
+    /**
+     * Second prompt run against the SAME workspace + in-process memory store,
+     * proving the multi-turn round-trip (memories persist between turns and are
+     * fed back to the intent planner as previousContext).
+     */
+    followUpPrompt?: string;
 }
 
 export const EVAL_CASES: EvalCase[] = [
@@ -42,6 +48,17 @@ export const EVAL_CASES: EvalCase[] = [
         prompt:
             "Create a landing page for a SaaS product called 'Nimbus'. Include a hero section with headline and CTA button, a features section with 3 feature cards, testimonials section with 2 quotes, and a footer with links.",
         expectedFeatures: ["Nimbus", "hero", "feature", "testimonial", "footer"],
+        maxDurationMs: 10 * 60_000,
+        maxFixAttempts: 3,
+    },
+    {
+        id: "multi-turn-counter",
+        tier: "easy",
+        prompt:
+            "Create a simple counter app with a large number display and a button that increments the count by 1 each time it is clicked. The count should start at 0.",
+        followUpPrompt:
+            "The counter app is working well. Now add a second button that decrements the count by 1 when clicked, and make the display show 'Count: N'.",
+        expectedFeatures: ["increment", "decrement", "setCount", "file:src/App.jsx"],
         maxDurationMs: 10 * 60_000,
         maxFixAttempts: 3,
     },

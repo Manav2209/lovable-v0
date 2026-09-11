@@ -3,6 +3,7 @@ import { frozenModel } from "../../client";
 import { SYSTEM_PROMPTS } from "../../../prompt/systemPrompt";
 import { sendSSEMessage } from "../../../sse";
 import { parseJsonObject } from "../../json";
+import { renderPriorContext } from "../../../memory";
 import type { WorkflowState } from "../../graphs/workflow";
 
 export const agentPlanSchema = z.object({
@@ -32,7 +33,7 @@ export async function planerNode(state: WorkflowState): Promise<Partial<Workflow
     : "";
   const tree = state.fileTree ? `\n\nFile tree:\n${state.fileTree}` : "";
   const memories = state.previousContext
-    ? `\n\nPrior conversation memories (do not treat as the user prompt): ${JSON.stringify(state.previousContext).slice(0, 4000)}`
+    ? `\n\nPrior conversation memories (do not treat as the user prompt):\n${renderPriorContext(state.previousContext)}`
     : "";
 
   const userContent =
