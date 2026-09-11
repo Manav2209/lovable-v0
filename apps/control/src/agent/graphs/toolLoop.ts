@@ -12,7 +12,7 @@ import { observe } from "../../observability/trace";
 const MAX_AGENT_STEPS = Number(process.env.MAX_AGENT_STEPS || 20);
 const MAX_TOOL_CALLS = Number(process.env.MAX_TOOL_CALLS || 40);
 const MAX_RUNTIME_MS = Number(process.env.MAX_AGENT_RUNTIME_MS || 8 * 60_000);
-const STALL_REPEAT = 3;
+const STALL_REPEAT = Number(process.env.STALL_REPEAT || 3);
 const MAX_TOOL_MESSAGE_CHARS = Number(process.env.MAX_TOOL_MESSAGE_CHARS || 16_000);
 const CONTEXT_BYTE_BUDGET = Number(process.env.CONTEXT_BYTE_BUDGET || 96_000);
 
@@ -73,7 +73,9 @@ export async function runReactLoop(
     const toolMessageIndexes: { tool: string; index: number }[] = [];
     let contextBytes = 0;
     let toolCalls = 0;
-    const stall: string[] = [];
+    let stallSig = "";
+    let stallBaseline = 0;
+    let stallCount = 0;
     const stats: AgentStats = emptyAgentStats();
     const loopStarted = started;
 
@@ -132,17 +134,6 @@ export async function runReactLoop(
         for (const call of calls) {
             if (toolCalls >= MAX_TOOL_CALLS) {
                 return { error: `Exceeded MAX_TOOL_CALLS of ${MAX_TOOL_CALLS}`, toolResults, agentStats: stats };
-            }
-
-            const signature = `${call.name}:${JSON.stringify(call.args)}`;
-            stall.push(signature);
-            if (stall.length > STALL_REPEAT) stall.shift();
-            if (stall.length === STALL_REPEAT && stall.every((s) => s === stall[0])) {
-                return {
-                    error: `Agent stalled repeating ${call.name}`,
-                    toolResults,
-                    agentStats: stats,
-                };
             }
 
             sendSSEMessage(state.clientId, {
@@ -209,6 +200,25 @@ export async function runReactLoop(
                     stats.changedFiles.push(...files);
                 } else if (typeof files === "string" && files) {
                     stats.changedFiles.push(files);
+                }
+            }
+
+            if (MUTATION_TOOLS.has(call.name)) {
+                const signature = `${call.name}:${JSON.stringify(call.args)}`;
+                const changedLen = stats.changedFiles.length;
+                if (signature !== stallSig || changedLen !== stallBaseline) {
+                    stallSig = signature;
+                    stallBaseline = changedLen;
+                    stallCount = 1;
+                } else {
+                    stallCount += 1;
+                }
+                if (stallCount >= STALL_REPEAT) {
+                    return {
+                        error: `Agent stalled repeating ${call.name} (no files changed)`,
+                        toolResults,
+                        agentStats: stats,
+                    };
                 }
             }
 
