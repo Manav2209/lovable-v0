@@ -10,6 +10,15 @@ const dependencyInput = z.object({
 /** Only allow npm package-name characters: no shell metacharacters, no spaces. */
 const PACKAGE_NAME_RE = /^[@a-zA-Z0-9][@a-zA-Z0-9._~+/^=*-]*$/;
 
+/**
+ * Placeholder/never-declared packages the model fabricates. `bun add` on these
+ * installs an unusable stub (e.g. @shadcn/ui@0.0.1) that breaks the build and,
+ * in the eval harness, writes through the shared template junction and poisons
+ * every subsequent case. shadcn/ui components are added via addShadcnComponent;
+ * template primitives import radix-ui directly.
+ */
+const BLOCKED_PACKAGES = new Set(["@shadcn/ui", "shadcn/ui", "@shadcn"]);
+
 function validatePackages(packages: string[]): string | null {
     for (const pkg of packages) {
         if (pkg.length > 256) {
@@ -17,6 +26,9 @@ function validatePackages(packages: string[]): string | null {
         }
         if (!PACKAGE_NAME_RE.test(pkg)) {
             return `Invalid package name: "${pkg}"`;
+        }
+        if (BLOCKED_PACKAGES.has(pkg)) {
+            return `"${pkg}" is not installable: it is a placeholder package. Use addShadcnComponent for shadcn/ui components (or radix-ui directly, as the template's ui/ primitives do).`;
         }
     }
     return null;

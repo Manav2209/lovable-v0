@@ -15,6 +15,27 @@ const TEMPLATE_DIR = path.resolve(import.meta.dir, "..", "..", "..", "template")
 const EXCLUDED = new Set(["node_modules", "dist", ".git", ".turbo"]);
 
 /**
+ * Packages that must never exist physically in the shared template store:
+ * they are placeholder registrations the agent sometimes installs via bun add,
+ * which writes through the node_modules junction into apps/template and breaks
+ * builds for every subsequent case. Prune them before seeding so one bad case
+ * can't poison the whole run.
+ */
+const SHARED_STORE_POLLUTION = new Set(["@shadcn"]);
+
+async function pruneSharedStorePollution(templateDir: string): Promise<void> {
+    const nmDir = path.join(templateDir, "node_modules");
+    if (!fs.existsSync(nmDir)) return;
+    for (const marker of SHARED_STORE_POLLUTION) {
+        const target = path.join(nmDir, marker);
+        if (fs.existsSync(target)) {
+            console.warn(`[seedWorkspace] Pruning shared-store pollution "${marker}" from ${nmDir}`);
+            await fs.promises.rm(target, { recursive: true, force: true });
+        }
+    }
+}
+
+/**
  * Mirrors production layout: control tools resolve every path as
  * `SHARED_DIR/PROJECT_ID`, so a seeded run gets
  * `<tempBase>/shared/<projectId>` populated from apps/template — the same
@@ -45,6 +66,7 @@ export async function seedWorkspace(
     }
 
     // Symlink template's pre-installed node_modules into the workspace.
+    await pruneSharedStorePollution(TEMPLATE_DIR);
     const templateNM = path.join(TEMPLATE_DIR, "node_modules");
     const targetNM = path.join(projectDir, "node_modules");
     try {
