@@ -25,6 +25,8 @@ export interface RunCaseResult {
     judge?: JudgeResult;
     dimensions: EvaluationDimensions;
     behavior: BehaviorCheck[];
+    /** Populated for multi-turn (followUpPrompt) cases: what survived in the memory store. */
+    memoryRoundTrip?: { entries: number; conversations: number; changeSummaries: number };
 }
 
 export interface RunCaseOptions {
@@ -67,6 +69,7 @@ export async function runCase(
     let checks: CheckResult | undefined;
     let judge: JudgeResult | undefined;
     let behavior: BehaviorCheck[] = [];
+    let memoryRoundTrip: RunCaseResult["memoryRoundTrip"];
 
     try {
         const workspace = await seedWorkspace(options.runDir, evalCase.id, {
@@ -80,64 +83,106 @@ export async function runCase(
             "@control/events/sink"
         );
         const { executeMainFlow } = await import("@control/agent/graphs/main");
+        const { getProjectMemories, saveConversationMemory, saveChangeSummary } = await import(
+            "@control/memory"
+        );
+
+        const turns = evalCase.followUpPrompt
+            ? [evalCase.prompt, evalCase.followUpPrompt]
+            : [evalCase.prompt];
 
         const abortController = new AbortController();
+        let final: WorkflowState | undefined;
+        let timedOut = false;
+        let eventsCaptured = 0;
 
-        const workflowPromise = traceAgentRun(
-            {
-                runId: options.runId,
-                caseId: evalCase.id,
-                projectId: workspace.projectId,
-                prompt: evalCase.prompt,
-                tier: evalCase.tier,
-                agentMode: "eval",
-            },
-            async () =>
-                executeMainFlow({
+        // Each turn runs against the same workspace + in-process memory store.
+        // After a completed turn, persist memory exactly as production
+        // processPrompt does so the next turn's planner sees prior context.
+        for (const [i, prompt] of turns.entries()) {
+            const previousContext =
+                i > 0 ? await getProjectMemories(workspace.projectId) : undefined;
+
+            const workflowPromise = traceAgentRun(
+                {
+                    runId: options.runId,
+                    caseId: evalCase.id,
                     projectId: workspace.projectId,
-                    prompt: evalCase.prompt,
-                    clientId: workspace.projectId,
-                    fixAttempts: 0,
-                    maxFixAttempts: options.maxFixAttempts,
-                    abortSignal: abortController.signal,
-                    completed: false,
-                }),
-        ).then(({ value, traceId }) => ({
-            ...value,
-            traceId: traceId ?? value.traceId,
-        })).catch((err: unknown): never => {
-            throw err instanceof Error ? err : new Error(String(err));
-        });
+                    prompt,
+                    tier: evalCase.tier,
+                    agentMode: "eval",
+                },
+                async () =>
+                    executeMainFlow({
+                        projectId: workspace.projectId,
+                        prompt,
+                        previousContext,
+                        clientId: workspace.projectId,
+                        fixAttempts: 0,
+                        maxFixAttempts: options.maxFixAttempts,
+                        abortSignal: abortController.signal,
+                        completed: false,
+                    }),
+            ).then(({ value, traceId }) => ({
+                ...value,
+                traceId: traceId ?? value.traceId,
+            })).catch((err: unknown): never => {
+                throw err instanceof Error ? err : new Error(String(err));
+            });
 
-        const raced = await Promise.race([
-            workflowPromise.then((final) => ({ kind: "done" as const, final })),
-            new Promise<{ kind: typeof TIMEOUT_MARKER }>((resolve) =>
-                setTimeout(() => resolve({ kind: TIMEOUT_MARKER }), options.timeoutMs),
-            ),
-        ]);
+            const raced = await Promise.race([
+                workflowPromise.then((finalState) => ({ kind: "done" as const, final: finalState })),
+                new Promise<{ kind: typeof TIMEOUT_MARKER }>((resolve) =>
+                    setTimeout(() => resolve({ kind: TIMEOUT_MARKER }), options.timeoutMs),
+                ),
+            ]);
+
+            if (raced.kind === TIMEOUT_MARKER) {
+                abortController.abort();
+                await Promise.race([
+                    workflowPromise.then(
+                        () => undefined,
+                        () => undefined,
+                    ),
+                    delay(ABORT_GRACE_MS),
+                ]);
+                timedOut = true;
+                break;
+            }
+
+            final = raced.final as WorkflowState;
+            if (final.completed && i < turns.length - 1) {
+                const summary = final.changeSummary;
+                const aiResponse =
+                    summary?.summary ?? `Workflow completed: ${final.buildStatus}`;
+                await saveConversationMemory(workspace.projectId, prompt, aiResponse);
+                await saveChangeSummary(workspace.projectId, prompt, summary);
+            }
+        }
+        eventsCaptured = getMemoryEvents().length;
 
         const afterSnap = await snapshotWorkspace(workspace.projectDir);
         const workspaceDiff = diffSnapshots(beforeSnap, afterSnap);
 
-        if (raced.kind === TIMEOUT_MARKER) {
-            abortController.abort();
-            await Promise.race([
-                workflowPromise.then(
-                    () => undefined,
-                    () => undefined,
-                ),
-                delay(ABORT_GRACE_MS),
-            ]);
+        if (turns.length > 1) {
+            const mem = await getProjectMemories(workspace.projectId);
+            memoryRoundTrip = {
+                entries: mem.length,
+                conversations: mem.filter((e) => e?.type === "conversation").length,
+                changeSummaries: mem.filter((e) => e?.type === "change_summary").length,
+            };
+        }
+
+        if (timedOut) {
             result = baseResult(evalCase, options, workspace.projectId, startedAt, {
                 status: "timeout",
                 completed: false,
                 error: `Exceeded ${options.timeoutMs}ms budget`,
-                eventsCaptured: getMemoryEvents().length,
+                eventsCaptured,
                 workspaceDiff,
             });
             metrics = extractMetrics(result);
-        } else {
-            const final = raced.final as WorkflowState;
+        } else if (final) {
             const stats = final.agentStats ?? emptyAgentStats();
             const status = mapStatus({
                 timedOut: false,
@@ -150,7 +195,7 @@ export async function runCase(
                 status,
                 completed: status === "completed",
                 error: final.error,
-                eventsCaptured: getMemoryEvents().length,
+                eventsCaptured,
                 workspaceDiff,
                 traceId: final.traceId,
                 build: {
@@ -202,6 +247,15 @@ export async function runCase(
                     }
                 }
             }
+        } else {
+            result = baseResult(evalCase, options, workspace.projectId, startedAt, {
+                status: "crashed",
+                completed: false,
+                error: "Workflow returned no result",
+                eventsCaptured,
+                workspaceDiff,
+            });
+            metrics = extractMetrics(result);
         }
 
         behavior = runBehaviorChecks(result);
@@ -233,7 +287,7 @@ export async function runCase(
         Boolean(checks),
         Boolean(judge),
     );
-    return { result, metrics, checks, judge, dimensions, behavior };
+    return { result, metrics, checks, judge, dimensions, behavior, memoryRoundTrip };
 }
 
 function baseResult(

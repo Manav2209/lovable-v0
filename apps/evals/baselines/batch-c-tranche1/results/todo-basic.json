@@ -1,0 +1,54 @@
+{
+  "runId": "run_mtvlhjb4",
+  "caseId": "todo-basic",
+  "projectId": "eval-todo-basic-mtvlmel3",
+  "tier": "easy",
+  "timestamp": 1789049066581,
+  "durationMs": 127369,
+  "eventsCaptured": 43,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "context.json"
+    ],
+    "modified": [
+      "src/App.jsx",
+      "src/components/ui/button.jsx",
+      "src/components/ui/card.jsx",
+      "src/components/ui/input.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvlmf1e_lbrogf0o",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 4,
+    "toolCalls": 12,
+    "durationMs": 127369
+  },
+  "files": {
+    "created": 0,
+    "modified": 4,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "readFile": 5,
+      "updateFile": 7
+    },
+    "readOps": 5,
+    "mutationOps": 7,
+    "buildCount": 1,
+    "timeToFirstToolMs": 2151,
+    "stitchInvoked": false
+  }
+}

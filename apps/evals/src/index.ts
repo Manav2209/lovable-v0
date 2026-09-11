@@ -235,13 +235,22 @@ async function main() {
     try {
         for (const c of cases) {
             process.stdout.write(`▶ ${c.id} ... `);
-            const { result, metrics, checks, judge, dimensions, behavior } = await runCase(c, {
-                runId,
-                runDir,
-                timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
-                maxFixAttempts: c.maxFixAttempts,
-            });
+            const { result, metrics, checks, judge, dimensions, behavior, memoryRoundTrip } =
+                await runCase(c, {
+                    runId,
+                    runDir,
+                    timeoutMs: Math.min(args.timeoutMs, c.maxDurationMs ?? args.timeoutMs),
+                    maxFixAttempts: c.maxFixAttempts,
+                });
             evaluated.push({ result, metrics, checks, judge, dimensions, behavior });
+
+            if (memoryRoundTrip && c.followUpPrompt) {
+                console.log(
+                    `      memory-roundtrip: ${memoryRoundTrip.entries} entries ` +
+                        `(conversations ${memoryRoundTrip.conversations}, ` +
+                        `change_summaries ${memoryRoundTrip.changeSummaries})`,
+                );
+            }
 
             const icon = result.status === "completed" ? "✔" : "✘";
             const checkStr = checks

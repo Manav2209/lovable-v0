@@ -1,0 +1,53 @@
+{
+  "runId": "run_mtvlhjb4",
+  "caseId": "modify-existing-component",
+  "projectId": "eval-modify-existing-component-mtvluq8q",
+  "tier": "easy",
+  "timestamp": 1789049454926,
+  "durationMs": 96985,
+  "eventsCaptured": 33,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "context.json"
+    ],
+    "modified": [
+      "src/App.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvluqgc_xqxhx7n9",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 8,
+    "toolCalls": 7,
+    "durationMs": 96985
+  },
+  "files": {
+    "created": 0,
+    "modified": 1,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "listFiles": 3,
+      "searchFiles": 2,
+      "readFile": 1,
+      "updateFile": 1
+    },
+    "readOps": 6,
+    "mutationOps": 1,
+    "buildCount": 1,
+    "timeToFirstToolMs": 1379,
+    "stitchInvoked": false
+  }
+}

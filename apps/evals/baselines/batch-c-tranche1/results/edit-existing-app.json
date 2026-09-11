@@ -1,0 +1,55 @@
+{
+  "runId": "run_mtvlxmpj",
+  "caseId": "edit-existing-app",
+  "projectId": "eval-edit-existing-app-mtvly3lz",
+  "tier": "medium",
+  "timestamp": 1789049612136,
+  "durationMs": 262359,
+  "eventsCaptured": 37,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 1,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "bun.lock",
+      "context.json"
+    ],
+    "modified": [
+      "package.json",
+      "src/App.jsx",
+      "src/lib/utils.js"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvlyklh_l0j8svsj",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 8,
+    "toolCalls": 9,
+    "durationMs": 262358
+  },
+  "files": {
+    "created": 0,
+    "modified": 2,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "readFile": 6,
+      "updateFile": 2,
+      "addDependency": 1
+    },
+    "readOps": 6,
+    "mutationOps": 3,
+    "buildCount": 1,
+    "timeToFirstToolMs": 2260,
+    "stitchInvoked": false
+  }
+}

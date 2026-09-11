@@ -1,0 +1,53 @@
+{
+  "runId": "run_mtvlhjb4",
+  "caseId": "landing-page",
+  "projectId": "eval-landing-page-mtvlp8q2",
+  "tier": "easy",
+  "timestamp": 1789049198952,
+  "durationMs": 160399,
+  "eventsCaptured": 33,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "context.json"
+    ],
+    "modified": [
+      "src/App.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvlp94t_u4f3xb4f",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 7,
+    "toolCalls": 7,
+    "durationMs": 160399
+  },
+  "files": {
+    "created": 0,
+    "modified": 1,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "listFiles": 1,
+      "readFile": 3,
+      "addShadcnComponent": 2,
+      "updateFile": 1
+    },
+    "readOps": 4,
+    "mutationOps": 3,
+    "buildCount": 1,
+    "timeToFirstToolMs": 1487,
+    "stitchInvoked": false
+  }
+}

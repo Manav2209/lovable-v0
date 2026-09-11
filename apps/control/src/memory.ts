@@ -110,3 +110,72 @@ export async function saveConversationMemory(
     };
     await saveProjectMemory(projectId, key, value);
 }
+
+export interface ChangeSummaryRecord {
+    filesCreated?: string[];
+    filesModified?: string[];
+    filesDeleted?: string[];
+    commandsExecuted?: string[];
+    dependenciesAdded?: string[];
+    dependenciesRemoved?: string[];
+    buildStatus?: string;
+    summary?: string;
+}
+
+/**
+ * Persist the structured change summary of a completed turn so the next turn
+ * can act on what the agent actually changed (files, deps, build status)
+ * instead of only free-text conversation.
+ */
+export async function saveChangeSummary(
+    projectId: string,
+    prompt: string,
+    changeSummary: ChangeSummaryRecord | null | undefined,
+): Promise<void> {
+    const key = `change_${Date.now()}`;
+    const value = {
+        timestamp: Date.now(),
+        prompt,
+        type: "change_summary",
+        changeSummary: changeSummary ?? null,
+    };
+    await saveProjectMemory(projectId, key, value);
+}
+
+/**
+ * Render prior memory entries as a compact, actionable plain-text block for the
+ * intent planner. Purely formatting — never throws on malformed entries.
+ */
+export function renderPriorContext(previousContext: unknown, maxChars = 2000): string {
+    if (!Array.isArray(previousContext) || previousContext.length === 0) return "";
+    const quote = (v: unknown, len: number): string => `"${String(v ?? "").slice(0, len)}"`;
+    const list = (v: unknown): string => {
+        const arr = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+        return arr.length ? `[${arr.join(", ")}]` : "[]";
+    };
+
+    const lines: string[] = [];
+    for (const raw of previousContext) {
+        if (!raw || typeof raw !== "object") continue;
+        const entry = raw as Record<string, unknown>;
+        if (entry.type === "change_summary") {
+            const cs = (entry.changeSummary ?? {}) as Record<string, unknown>;
+            lines.push(
+                `- Prior turn: Request ${quote(entry.prompt, 160)} — ${quote(cs.summary, 200)} ` +
+                    `(created ${list(cs.filesCreated)}, modified ${list(cs.filesModified)}, ` +
+                    `deleted ${list(cs.filesDeleted)}, deps +${list(cs.dependenciesAdded)} -${list(cs.dependenciesRemoved)}, ` +
+                    `build ${String(cs.buildStatus ?? "unknown")})`,
+            );
+        } else {
+            lines.push(
+                `- Prior turn: ${quote(entry.prompt, 200)} -> ${quote(entry.response, 200)}`,
+            );
+        }
+    }
+
+    let out = lines.join("\n");
+    if (out.length > maxChars) {
+        out = out.slice(0, maxChars) + "\n...(truncated)";
+    }
+    return out;
+}

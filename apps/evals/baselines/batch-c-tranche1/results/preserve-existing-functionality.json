@@ -1,0 +1,26 @@
+{
+  "runId": "run_mtwbg7q7",
+  "caseId": "preserve-existing-functionality",
+  "projectId": "eval-preserve-existing-functionality-mtwbgrbs",
+  "tier": "medium",
+  "timestamp": 1789092473108,
+  "durationMs": 629193,
+  "eventsCaptured": 49,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "timeout",
+  "completed": false,
+  "error": "Exceeded 600000ms budget",
+  "workspaceDiff": {
+    "created": [
+      "bun.lock",
+      "src/components/ui/checkbox.jsx"
+    ],
+    "modified": [
+      "package.json",
+      "src/App.jsx",
+      "src/index.css"
+    ],
+    "deleted": []
+  }
+}
