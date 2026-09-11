@@ -1,0 +1,57 @@
+{
+  "runId": "run_mtvm3xqm",
+  "caseId": "add-page-to-existing-router",
+  "projectId": "eval-add-page-to-existing-router-mtvm4euv",
+  "tier": "medium",
+  "timestamp": 1789049906687,
+  "durationMs": 191270,
+  "eventsCaptured": 31,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 1,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "bun.lock",
+      "context.json",
+      "src/components/About.jsx"
+    ],
+    "modified": [
+      "package.json",
+      "src/App.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvm4w74_39yap6rw",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 5,
+    "toolCalls": 6,
+    "durationMs": 191270
+  },
+  "files": {
+    "created": 1,
+    "modified": 1,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "listFiles": 1,
+      "readFile": 2,
+      "createFile": 1,
+      "addDependency": 1,
+      "updateFile": 1
+    },
+    "readOps": 3,
+    "mutationOps": 3,
+    "buildCount": 1,
+    "timeToFirstToolMs": 1690,
+    "stitchInvoked": false
+  }
+}

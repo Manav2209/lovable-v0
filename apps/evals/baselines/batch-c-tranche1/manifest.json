@@ -1,0 +1,52 @@
+{
+  "runId": "batch-c-tranche1",
+  "startedAt": 1789048839439,
+  "provider": "airouter",
+  "model": "openai/gpt-4o-mini",
+  "timeoutMsPerCase": 720000,
+  "bunVersion": "1.4.2",
+  "platform": "win32-x64",
+  "agentContract": "new-react",
+  "cases": [
+    {
+      "id": "counter-basic",
+      "tier": "easy",
+      "prompt": "Create a simple counter app with a number display and two buttons: one to increment and one to decrement the count. The count should start at 0."
+    },
+    {
+      "id": "todo-basic",
+      "tier": "easy",
+      "prompt": "Create a todo list app. Users should be able to type a task in an input field, add it to a list, mark tasks as complete (strikethrough), and delete tasks."
+    },
+    {
+      "id": "landing-page",
+      "tier": "easy",
+      "prompt": "Create a landing page for a SaaS product called 'Nimbus'. Include a hero section with headline and CTA button, a features section with 3 feature cards, testimonials section with 2 quotes, and a footer with links."
+    },
+    {
+      "id": "add-component-using-existing-library",
+      "tier": "easy",
+      "prompt": "Keep the existing todo list. Add a Card from the existing shadcn/ui Card component (@/components/ui/card) around the list. Do not add a new CSS framework."
+    },
+    {
+      "id": "modify-existing-component",
+      "tier": "easy",
+      "prompt": "The Counter component currently shows a static Count: 0 button. Make it a real counter with increment using useState. Keep the Counter component rather than deleting it."
+    },
+    {
+      "id": "edit-existing-app",
+      "tier": "medium",
+      "prompt": "This project already has a working todo list. Add an optional due-date field to each task and show it next to the task text. Do not replace the whole app with a Hello World template."
+    },
+    {
+      "id": "add-page-to-existing-router",
+      "tier": "medium",
+      "prompt": "This app already has a Home view and a nav link. Add an About page with team info and a nav link to it. Prefer react-router if you add real routes; keep the existing Home welcome message."
+    },
+    {
+      "id": "preserve-existing-functionality",
+      "tier": "medium",
+      "prompt": "Keep add and delete for todos working. Also add a completed checkbox that strikethroughs the task text when checked."
+    }
+  ]
+}

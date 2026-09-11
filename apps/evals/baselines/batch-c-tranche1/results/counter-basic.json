@@ -1,0 +1,52 @@
+{
+  "runId": "run_mtvlhjb4",
+  "caseId": "counter-basic",
+  "projectId": "eval-counter-basic-mtvlhvuo",
+  "tier": "easy",
+  "timestamp": 1789048855613,
+  "durationMs": 206170,
+  "eventsCaptured": 33,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "context.json"
+    ],
+    "modified": [
+      "src/App.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvliaet_7vcin9e9",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 5,
+    "toolCalls": 7,
+    "durationMs": 206170
+  },
+  "files": {
+    "created": 0,
+    "modified": 2,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "readFile": 4,
+      "updateFile": 2,
+      "addShadcnComponent": 1
+    },
+    "readOps": 4,
+    "mutationOps": 3,
+    "buildCount": 1,
+    "timeToFirstToolMs": 2131,
+    "stitchInvoked": false
+  }
+}

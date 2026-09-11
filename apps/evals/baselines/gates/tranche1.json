@@ -1,0 +1,14 @@
+{
+  "average": 85,
+  "minCases": 8,
+  "cases": {
+    "counter-basic": 90,
+    "todo-basic": 90,
+    "landing-page": 90,
+    "add-component-using-existing-library": 90,
+    "modify-existing-component": 90,
+    "edit-existing-app": 90,
+    "add-page-to-existing-router": 90,
+    "preserve-existing-functionality": 30
+  }
+}

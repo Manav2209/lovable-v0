@@ -1,0 +1,51 @@
+{
+  "runId": "run_mtvlhjb4",
+  "caseId": "add-component-using-existing-library",
+  "projectId": "eval-add-component-using-existing-library-mtvlstry",
+  "tier": "easy",
+  "timestamp": 1789049366205,
+  "durationMs": 83443,
+  "eventsCaptured": 25,
+  "maxFixAttempts": 3,
+  "dependenciesAdded": 0,
+  "status": "completed",
+  "completed": true,
+  "workspaceDiff": {
+    "created": [
+      "context.json"
+    ],
+    "modified": [
+      "src/App.jsx"
+    ],
+    "deleted": []
+  },
+  "traceId": "lf_mtvlsu2m_yumsme2o",
+  "build": {
+    "status": "passed"
+  },
+  "repair": {
+    "attempts": 0,
+    "maxAttempts": 3
+  },
+  "agent": {
+    "steps": 4,
+    "toolCalls": 3,
+    "durationMs": 83443
+  },
+  "files": {
+    "created": 0,
+    "modified": 1,
+    "deleted": 0
+  },
+  "react": {
+    "toolCallsByTool": {
+      "readFile": 2,
+      "updateFile": 1
+    },
+    "readOps": 2,
+    "mutationOps": 1,
+    "buildCount": 1,
+    "timeToFirstToolMs": 2066,
+    "stitchInvoked": false
+  }
+}
