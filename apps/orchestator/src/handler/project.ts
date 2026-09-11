@@ -71,10 +71,8 @@ async function ensureCredentialsSecret(): Promise<void> {
             body: secret,
         });
         console.log(`[k8s] Created Secret ${SECRET_NAME}`);
-    } catch (e: unknown) {
-        const status = (e as { response?: { statusCode?: number } })?.response
-            ?.statusCode;
-        if (status === 409) {
+    } catch {
+        try {
             const existing = await coreApi.readNamespacedSecret({
                 name: SECRET_NAME,
                 namespace: NAMESPACE,
@@ -93,9 +91,9 @@ async function ensureCredentialsSecret(): Promise<void> {
                 });
                 console.log(`[k8s] Updated Secret ${SECRET_NAME}`);
             }
-            return;
+        } catch (readErr) {
+            console.warn(`[k8s] Could not update existing Secret ${SECRET_NAME}:`, readErr);
         }
-        throw e;
     }
 }
 
@@ -324,6 +322,7 @@ export async function createProjectPod(projectId: string) {
         { name: "PREVIEW_UPSTREAM", value: hostUpstream },
         { name: "INGRESS_ADMIN_URL", value: INGRESS_ADMIN_URL },
         { name: "PREVIEW_URL", value: previewUrl },
+        { name: "SSE_HOST", value: "0.0.0.0" },
     ].filter((env) => "valueFrom" in env || (env.value !== undefined && env.value !== ""));
 
     const deployment: k8s.V1Deployment = {
@@ -357,7 +356,7 @@ export async function createProjectPod(projectId: string) {
                     containers: [
                         {
                             name: "control",
-                            imagePullPolicy: "Never",
+                            imagePullPolicy: "IfNotPresent",
                             image: "manav2854/control-pod:v2",
                             command: ["bun", "--dns-result-order=ipv4first", "run", "src/index.ts"],
                             env: envVars,
@@ -381,7 +380,7 @@ export async function createProjectPod(projectId: string) {
                         },
                         {
                             name: "serving",
-                            imagePullPolicy: "Never",
+                            imagePullPolicy: "IfNotPresent",
                             image: "manav2854/serving-pod:v1",
                             command: ["bun", "--dns-result-order=ipv4first", "run", "src/index.ts"],
                             env: envVars,

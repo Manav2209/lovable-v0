@@ -23,10 +23,13 @@
     "@langfuse/otel": "^5.11.0",
     "@langfuse/tracing": "^5.11.0",
     "@opentelemetry/sdk-node": "^0.221.0",
+    "dotenv": "^17.2.3",
+    "glob": "^11.0.1",
     "langchain": "^1.5.4",
     "r2": "*",
     "redis": "^5.10.0",
     "shared-redis": "*",
-    "types": "*"
+    "types": "*",
+    "zod": "^3.24.1"
   }
 }
