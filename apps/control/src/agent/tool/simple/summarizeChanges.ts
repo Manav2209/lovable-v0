@@ -24,6 +24,7 @@ function analyzeToolResults(toolResults: any[]): Partial<ChangeSummary> {
     const dependenciesRemoved: string[] = [];
 
     for (const toolResult of toolResults) {
+        if (toolResult.result?.success === false || toolResult.result?.error) continue;
         const toolName = toolResult.toolCall?.tool;
         const args = toolResult.toolCall?.args;
 
@@ -114,7 +115,7 @@ Generate a concise summary of what was accomplished:`;
         const response = await model.invoke([
             { role: "system", content: systemPrompt },
             { role: "user", content: userMessage },
-        ]);
+        ], { signal: AbortSignal.timeout(Number(process.env.SUMMARY_TIMEOUT_MS || 20_000)) });
 
         return response.text.trim();
     } catch (error) {

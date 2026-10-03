@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import { glob } from "glob";
 import { IGNORE_PATTERNS } from "./simple/ignorePatterns";
-import { getProjectDir } from "./security";
+import { getProjectDir, resolveSafePath } from "./security";
+import { contentHash } from "./result";
 import { sendSSEMessage } from "../../sse";
 import type { WorkflowState } from "../graphs/workflow";
 
@@ -21,6 +22,34 @@ export type TemplateFacts = {
         lib?: string;
     };
 };
+
+export type WorkspaceFile = {
+    filePath: string;
+    content: string;
+    hash: string;
+    truncated: boolean;
+};
+
+/** Supply the working code up front instead of spending model turns discovering it. */
+export function collectWorkspaceContext(projectDir: string, facts: TemplateFacts): WorkspaceFile[] {
+    const extension = facts.language === "typescript" ? "tsx" : "jsx";
+    const candidates = [
+        facts.entryPoints.app, facts.entryPoints.main, "src/App.css", "src/index.css",
+        "package.json", "components.json",
+        ...["button", "input", "label", "card", "textarea"].map((name) => `src/components/ui/${name}.${extension}`),
+    ];
+    const files: WorkspaceFile[] = [];
+    let remaining = 32_000;
+    for (const filePath of new Set(candidates)) {
+        const resolved = resolveSafePath(projectDir, filePath);
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile() || remaining <= 0) continue;
+        const content = fs.readFileSync(resolved, "utf8");
+        const limit = Math.min(12_000, remaining);
+        files.push({ filePath, content: content.slice(0, limit), hash: contentHash(content), truncated: content.length > limit });
+        remaining -= Math.min(content.length, limit);
+    }
+    return files;
+}
 
 function firstExisting(root: string, candidates: string[]): string | undefined {
     return candidates.find((rel) => fs.existsSync(path.join(root, rel)));
@@ -99,11 +128,12 @@ export async function collectWorkspaceFactsNode(
     const projectDir = getProjectDir();
     const templateFacts = collectTemplateFacts(projectDir);
     const fileTree = await collectFileTree(projectDir);
+    const workspaceContext = collectWorkspaceContext(projectDir, templateFacts);
 
     sendSSEMessage(state.clientId, {
         type: "facts_ready",
         message: `Template is ${templateFacts.language} (${templateFacts.entryPoints.app})`,
     });
 
-    return { templateFacts, fileTree };
+    return { templateFacts, fileTree, workspaceContext };
 }

@@ -121,6 +121,12 @@ Control/serving use **per-project** consumer groups (`control-{id}`, `serve-{id}
 
 ### Typical processes
 
+On Windows, run `pwsh -File scripts/redis-dev.ps1` in a terminal before starting
+the host apps. It applies `redis.yaml`, waits for Redis, and automatically
+reconnects the port-forward after Kubernetes disconnects. Keep that terminal
+running. Use `-SkipApply` to reconnect to the existing deployment without
+applying manifest changes. Stop any existing forward on port 6379 first.
+
 ```text
 kubectl port-forward svc/redis 6379:6379
 apps/backend          → :4000

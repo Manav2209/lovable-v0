@@ -10,6 +10,7 @@ import { runReactLoop } from "./toolLoop";
 import { emptyAgentStats, mergeAgentStats, type AgentStats } from "../agentStats";
 import { observe } from "../../observability/trace";
 import { getActiveTraceId } from "../../observability/langfuse";
+import type { WorkspaceFile } from "../tool/templateFacts";
 
 export interface WorkflowState {
     projectId: string;
@@ -21,9 +22,12 @@ export interface WorkflowState {
         areas: string[];
         constraints: string[];
         steps: string[];
+        visualDirection: string;
+        interactions: string[];
     };
     templateFacts?: unknown;
     fileTree?: string;
+    workspaceContext?: WorkspaceFile[];
     previousContext?: any;
     toolResults?: any[];
     buildStatus?: "pending" | "success" | "errors" | "tested";
