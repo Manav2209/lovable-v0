@@ -2,7 +2,7 @@
   "name": "lovable",
   "private": true,
   "scripts": {
-    "preinstall": "npx only-allow bun",
+    "preinstall": "bun x --bun only-allow@1.2.1 bun",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
@@ -17,7 +17,7 @@
   "engines": {
     "node": ">=18"
   },
-  "packageManager": "bun@1.2.8",
+  "packageManager": "bun@1.4.2",
   "workspaces": [
     "apps/*",
     "packages/*"

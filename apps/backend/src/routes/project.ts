@@ -58,7 +58,7 @@ projectRouter.post("/project/:projectId/events/ticket",
             });
         }
 
-        const ticket = mintSseTicket(projectId, req.userId!);
+        const ticket = await mintSseTicket(projectId, req.userId!);
         return res.status(200).json({
             success: true,
             data: { ticket, expiresInMs: SSE_TICKET_TTL_MS },

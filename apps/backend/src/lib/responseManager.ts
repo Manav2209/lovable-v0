@@ -1,117 +1,47 @@
-import { randomUUID } from "node:crypto";
+import { RedisManager } from "shared-redis";
 
-type Waiter = {
-    id: string;
-    resolve: (value: string) => void;
-    timer: ReturnType<typeof setTimeout>;
-    expectedTypes?: string[];
-};
+const RESULT_TTL_SECONDS = 1800;
+const POLL_INTERVAL_MS = 200;
 
-/**
- * Correlates async stream responses with the HTTP request that initiated them
- * (spec-06 §1). Resolvers are keyed by `jobId` — not projectId — so concurrent
- * build/prompt/run operations for the same project each resolve with their own
- * matching response.
- *
- * Each waiter is tracked by a unique id so that timeout cleanup removes the
- * correct waiter instead of blindly shifting the first one.
- */
+/** Results belong to jobs in Redis; an HTTP connection remains on its backend. */
 export class ResponseManager {
-    private responses = new Map<string, Waiter[]>();
+  private activeWaiters = 0;
 
-    wait(
-        key: string,
-        timeoutMs: number,
-        expectedTypes?: string[],
-    ): Promise<string> {
-        const id = randomUUID();
-
-        return new Promise<string>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.removeWaiter(key, id);
-                console.warn(
-                    `[responseManager] Waiter ${id.slice(0, 8)} timed out for key ${key}`,
-                );
-                reject(new Error("TIMEOUT"));
-            }, timeoutMs);
-
-            const waiter: Waiter = {
-                id,
-                resolve: (value: string) => {
-                    clearTimeout(timer);
-                    resolve(value);
-                },
-                timer,
-                expectedTypes,
-            };
-
-            const list = this.responses.get(key) ?? [];
-            list.push(waiter);
-            this.responses.set(key, list);
-        });
+  async wait(key: string, timeoutMs: number, expectedTypes?: string[]): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    this.activeWaiters++;
+    try {
+      const redis = await RedisManager.getWriter();
+      do {
+        const results = await redis.hGetAll(this.resultKey(key));
+        const value = expectedTypes?.length
+          ? expectedTypes.map(type => results[type]).find(value => value !== undefined)
+          : Object.values(results)[0];
+        if (value !== undefined) return value;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise(resolve => setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remaining)));
+      } while (Date.now() <= deadline);
+      throw new Error("TIMEOUT");
+    } finally {
+      this.activeWaiters--;
     }
+  }
 
-    resolve(key: string, value: string) {
-        const list = this.responses.get(key);
-        if (!list || list.length === 0) {
-            console.warn(
-                `[responseManager] No waiter for key ${key} — late response dropped`,
-            );
-            return;
-        }
+  async resolve(key: string, value: string): Promise<void> {
+    const { type } = JSON.parse(value) as { type?: string };
+    if (!type) throw new Error("Job response is missing its type");
+    const redis = await RedisManager.getWriter();
+    // Commit the response and its TTL together before the stream message is ACKed.
+    await redis.multi()
+      .hSet(this.resultKey(key), type, value)
+      .expire(this.resultKey(key), RESULT_TTL_SECONDS)
+      .exec();
+  }
 
-        let incomingType: string | undefined;
-        try {
-            incomingType = (JSON.parse(value) as { type?: string }).type;
-        } catch {
-            incomingType = undefined;
-        }
+  getActiveChannelsCount() { return this.activeWaiters; }
 
-        const index = list.findIndex((waiter) => {
-            if (!waiter.expectedTypes || waiter.expectedTypes.length === 0) {
-                return true;
-            }
-            return incomingType != null && waiter.expectedTypes.includes(incomingType);
-        });
-
-        if (index === -1) {
-            console.warn(
-                `[responseManager] Ignoring ${incomingType} for ${key} (no matching waiter)`,
-            );
-            return;
-        }
-
-        const [waiter] = list.splice(index, 1);
-        if (list.length === 0) {
-            this.responses.delete(key);
-        } else {
-            this.responses.set(key, list);
-        }
-        waiter?.resolve(value);
-    }
-
-    getActiveChannelsCount() {
-        let count = 0;
-        for (const list of this.responses.values()) {
-            count += list.length;
-        }
-        return count;
-    }
-
-    private removeWaiter(key: string, waiterId: string) {
-        const list = this.responses.get(key);
-        if (!list) return;
-
-        const index = list.findIndex((w) => w.id === waiterId);
-        if (index === -1) return;
-
-        list.splice(index, 1);
-        if (list.length === 0) {
-            this.responses.delete(key);
-        } else {
-            this.responses.set(key, list);
-        }
-    }
+  private resultKey(key: string) { return `lovable:job:${key}:responses`; }
 }
 
 export const responseManager = new ResponseManager();

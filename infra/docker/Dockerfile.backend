@@ -1,0 +1,19 @@
+FROM oven/bun:1.4.2 AS deps
+WORKDIR /app
+COPY package.json bun.lock ./
+COPY apps ./apps
+COPY packages ./packages
+RUN bun install --frozen-lockfile
+
+FROM oven/bun:1.4.2 AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json ./package.json
+COPY --from=deps /app/packages ./packages
+COPY --from=deps /app/apps/backend ./apps/backend
+RUN mkdir -p /app/shared /app/tmp && chown -R 1000:1000 /app/shared /app/tmp
+ENV TMPDIR=/app/tmp HOME=/app/tmp BUN_INSTALL_CACHE_DIR=/app/tmp/bun-cache
+USER 1000:1000
+WORKDIR /app/apps/backend
+CMD ["bun", "run", "start"]

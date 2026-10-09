@@ -53,7 +53,19 @@ export function slugFromHost(
     const suffix = `.${domain.toLowerCase()}`;
     if (!host.endsWith(suffix)) return null;
     const slug = host.slice(0, -suffix.length);
-    return slug || null;
+    return isPreviewSlug(slug) ? slug : null;
+}
+
+export function isPreviewSlug(slug: string): boolean {
+    return slug.length <= 63 && /^proj-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug);
+}
+
+export function projectServiceUrl(slug: string, namespace: string): string {
+    if (!isPreviewSlug(slug)) throw new Error("Invalid preview slug");
+    if (namespace.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(namespace)) {
+        throw new Error("Invalid project namespace");
+    }
+    return `http://${slug}.${namespace}.svc.cluster.local:80`;
 }
 
 /** Redis stream for preview route registration */

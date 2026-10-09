@@ -1,0 +1,188 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: lovable-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: backend}
+  template:
+    metadata:
+      labels: {app: backend}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: backend
+          image: ghcr.io/manav2209/lovable-backend:local
+          ports: [{name: http, containerPort: 4000}]
+          envFrom:
+            - configMapRef: {name: platform-config}
+            - secretRef: {name: platform-secrets}
+          env: [{name: PORT, value: "4000"}]
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: lovable-system
+spec:
+  selector: {app: backend}
+  ports: [{port: 80, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: lovable-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: web}
+  template:
+    metadata:
+      labels: {app: web}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 101
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: web
+          image: ghcr.io/manav2209/lovable-web:local
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: lovable-system
+spec:
+  selector: {app: web}
+  ports: [{port: 80, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apps-ingress
+  namespace: lovable-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: apps-ingress}
+  template:
+    metadata:
+      labels: {app: apps-ingress}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: apps-ingress
+          image: ghcr.io/manav2209/lovable-ingress:local
+          envFrom: [{configMapRef: {name: platform-config}}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /_ingress/health, port: http}
+          livenessProbe:
+            httpGet: {path: /_ingress/health, port: http}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apps-ingress
+  namespace: lovable-system
+spec:
+  selector: {app: apps-ingress}
+  ports: [{port: 80, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: lovable-system
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: orchestrator}
+  template:
+    metadata:
+      labels: {app: orchestrator}
+    spec:
+      serviceAccountName: lovable-orchestrator
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: orchestrator
+          image: ghcr.io/manav2209/lovable-orchestrator:local
+          envFrom: [{configMapRef: {name: platform-config}}]
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef: {name: platform-secrets, key: REDIS_URL}
+            - {name: SKIP_K8S, value: "false"}
+          ports: [{name: health, containerPort: 3003}]
+          startupProbe:
+            httpGet: {path: /healthz, port: health}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}

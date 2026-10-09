@@ -1,7 +1,7 @@
 import { getObject, listObjects } from "r2";
 import fs from "fs";
 import path from "path";
-import net from "node:net";
+import { previewResponds } from "../health";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
     PROJECT_FAILED,
@@ -372,35 +372,8 @@ async function pidsListeningOnPort(port: number): Promise<number[]> {
 async function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    // Prefer HTTP — Vite may accept TCP before it's ready to serve.
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/`, {
-        method: "GET",
-        signal: AbortSignal.timeout(2000),
-      });
-      // Any HTTP response means the server is up (including 404).
-      if (res.status >= 100) return true;
-    } catch {
-      /* not ready yet */
-    }
-
-    try {
-      const ok = await new Promise<boolean>((resolve) => {
-        const socket = net.connect({ host: "127.0.0.1", port }, () => {
-          socket.end();
-          resolve(true);
-        });
-        socket.on("error", () => resolve(false));
-        socket.setTimeout(1500, () => {
-          socket.destroy();
-          resolve(false);
-        });
-      });
-      if (ok) return true;
-    } catch {
-      /* ignore */
-    }
-
+    // Match the Kubernetes readiness contract; an open socket or HTTP 500 is insufficient.
+    if (await previewResponds(port)) return true;
     await new Promise((r) => setTimeout(r, 1000));
   }
   return false;

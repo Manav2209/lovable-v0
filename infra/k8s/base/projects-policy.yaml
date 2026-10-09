@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: project-ingress
+  namespace: lovable-projects
+spec:
+  podSelector:
+    matchLabels: {app: lovable-project}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: lovable-system}
+          podSelector:
+            matchLabels: {app: apps-ingress}
+      ports: [{protocol: TCP, port: 3000}]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: project-capacity
+  namespace: lovable-projects
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "16"
+    limits.memory: 16Gi
+    requests.ephemeral-storage: 4Gi
+    limits.ephemeral-storage: 32Gi

@@ -29,9 +29,9 @@ async function resolveIdentity(
     queryToken: string | null,
 ): Promise<{ userId: string } | null> {
     // Cleartext JWT never sent on the wire via query string: query tokens must
-    // be short-lived single-use tickets (spec-05 §5).
+    // be short-lived opaque tickets.
     if (queryToken) {
-        const t = redeemSseTicket(queryToken);
+        const t = await redeemSseTicket(queryToken);
         if (t && t.projectId === projectId) {
             return { userId: t.userId };
         }
@@ -94,6 +94,7 @@ export async function projectEvents(req: Request, res: Response) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
         "Access-Control-Allow-Origin": sseAccessControlAllowOrigin(),
     });
     res.write(
