@@ -4,21 +4,18 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "@types/bun": "latest",
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/mime-types": "^3.0.1"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.1.17",
     "@langchain/google-genai": "^2.1.13",
     "@openrouter/ai-sdk-provider": "^2.1.1",
-    "@types/bcrypt": "^6.0.0",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/mime-types": "^3.0.1",
     "ai": "^6.0.50",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",

@@ -71,7 +71,7 @@ Open `http://app.127.0.0.1.nip.io`. If the LoadBalancer is pending, use `kubectl
 
 ## Published releases and migrations
 
-The deployment workflow checks types, tests against an isolated Redis, builds the frontend, validates Caddy, renders Kubernetes configuration, and builds all six images. Main-branch runs publish SHA tags to GHCR and produce a `release-<full-git-sha>` artifact containing digest-pinned configuration. It does not apply anything to a cluster.
+The deployment workflow checks types, tests against an isolated Redis, builds the frontend, validates Caddy, renders Kubernetes configuration, and builds all six pruned images. It starts each runtime image for a smoke check before publishing. Pushes to `ops` and pull requests validate the images; main-branch runs publish SHA tags to GHCR and produce a `release-<full-git-sha>` artifact containing digest-pinned configuration. It does not apply anything to a cluster.
 
 Download that artifact into `infra/k8s/releases/<full-git-sha>/` in a checkout of the same revision. The release records four platform images and both runtime images. Kustomize does not rewrite image strings stored in ConfigMap data, so the helper patches `CONTROL_IMAGE` and `SERVE_IMAGE` explicitly.
 

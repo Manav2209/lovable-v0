@@ -1,12 +1,23 @@
-FROM oven/bun:1.4.2 AS builder
+# syntax=docker/dockerfile:1
+FROM oven/bun:1.4.2 AS base
 WORKDIR /app
 
-COPY package.json bun.lock ./
+FROM base AS pruner
+RUN bun add --global turbo@2.7.6
+COPY package.json bun.lock turbo.json .gitignore ./
 COPY apps ./apps
 COPY packages ./packages
+RUN bun x --bun --no-install turbo prune web --docker
 
-RUN bun install --frozen-lockfile
-RUN cd apps/web && bun run build
+FROM base AS deps
+COPY --from=pruner /app/out/json/ ./
+# Vite, TypeScript, and Tailwind are needed only while building the static site.
+RUN --mount=type=cache,id=bun-web,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
+
+FROM deps AS builder
+COPY --from=pruner /app/out/full/ ./
+RUN bun run --cwd apps/web build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 

@@ -1,17 +1,28 @@
-FROM oven/bun:1.4.2 AS deps
+# syntax=docker/dockerfile:1
+FROM oven/bun:1.4.2 AS base
 WORKDIR /app
-COPY package.json bun.lock ./
+
+# Prune each service to its declared workspace and lockfile dependencies.
+FROM base AS pruner
+RUN bun add --global turbo@2.7.6
+COPY package.json bun.lock turbo.json .gitignore ./
 COPY apps ./apps
 COPY packages ./packages
-RUN bun install --frozen-lockfile
+RUN bun x --bun --no-install turbo prune ingress --docker
 
-FROM oven/bun:1.4.2 AS runtime
-WORKDIR /app
+# Manifests arrive before source so edits do not invalidate the install layer.
+FROM base AS deps
+COPY --from=pruner /app/out/json/ ./
+RUN --mount=type=cache,id=bun-ingress,target=/root/.bun/install/cache \
+    bun install --production --frozen-lockfile
+
+FROM deps AS source
+COPY --from=pruner /app/out/full/ ./
+
+FROM base AS runtime
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/package.json ./package.json
-COPY --from=deps /app/packages ./packages
-COPY --from=deps /app/apps/ingress ./apps/ingress
+# Preserve root and workspace-local node_modules, including workspace symlinks.
+COPY --from=source /app/ ./
 RUN mkdir -p /app/shared /app/tmp && chown -R 1000:1000 /app/shared /app/tmp
 ENV TMPDIR=/app/tmp HOME=/app/tmp BUN_INSTALL_CACHE_DIR=/app/tmp/bun-cache
 USER 1000:1000
