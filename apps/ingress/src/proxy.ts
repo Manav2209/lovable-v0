@@ -6,7 +6,9 @@ import { getRoute } from "./registry";
 const HOP_HEADERS = ["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"];
 
 function requestHeaders(req: http.IncomingMessage, target: URL, upgrade = false): http.OutgoingHttpHeaders {
-  const headers: http.OutgoingHttpHeaders = { ...req.headers, host: target.host };
+  // The gateway has validated the public preview host. Keep it for Vite's
+  // host allow-list and for applications that generate absolute URLs.
+  const headers: http.OutgoingHttpHeaders = { ...req.headers, host: req.headers.host || target.host };
   if (!upgrade) {
     const connection = String(req.headers.connection || "").split(",").map(h => h.trim().toLowerCase());
     for (const name of [...HOP_HEADERS, ...connection]) delete headers[name];

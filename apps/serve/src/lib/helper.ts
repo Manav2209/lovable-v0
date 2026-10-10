@@ -11,6 +11,7 @@ import {
     sanitizeSubprocessEnv,
 } from "types";
 import { publishEnvelope } from "shared-redis";
+import { previewProcessEnv } from "./previewEnv";
 
 const runningProcesses = new Map<string, ChildProcess>();
 /** Project ids whose current child is being replaced; their close must not emit RUN_FAILED. */
@@ -264,9 +265,7 @@ export const serveTheProject = async (projectId: string) => {
           stdio: ["ignore", "pipe", "pipe"],
           detached: false,
           env: {
-            ...sanitizeServingEnv(),
-            PORT: port.toString(),
-            HOST: "0.0.0.0",
+            ...previewProcessEnv(projectId),
           },
         },
       )
@@ -275,9 +274,7 @@ export const serveTheProject = async (projectId: string) => {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
         env: {
-          ...sanitizeServingEnv(),
-          PORT: port.toString(),
-          HOST: "0.0.0.0",
+          ...previewProcessEnv(projectId),
         },
       });
 

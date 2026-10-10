@@ -1,0 +1,29 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+# Compatibility for this local Docker Desktop runtime, which uses cgroup v1.
+# Remove this override when the host uses cgroup v2.
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    failCgroupV1: false
+  - |
+    apiVersion: kubeadm.k8s.io/v1beta4
+    kind: ClusterConfiguration
+    controllerManager:
+      extraArgs:
+        - name: leader-elect-lease-duration
+          value: "90s"
+        - name: leader-elect-renew-deadline
+          value: "60s"
+        - name: leader-elect-retry-period
+          value: "5s"
+    scheduler:
+      extraArgs:
+        - name: leader-elect-lease-duration
+          value: "90s"
+        - name: leader-elect-renew-deadline
+          value: "60s"
+        - name: leader-elect-retry-period
+          value: "5s"

@@ -46,8 +46,10 @@ afterAll(async () => {
 test("compressed response bytes, cookies, and request paths survive proxying", async () => {
   const payload = gzipSync("preview content");
   let receivedPath = "";
+  let receivedHost = "";
   const upstream = http.createServer((req, res) => {
     receivedPath = req.url!;
+    receivedHost = req.headers.host!;
     res.writeHead(200, {
       "content-encoding": "gzip", "content-length": payload.length,
       "set-cookie": ["first=1; Path=/", "second=2; Path=/"],
@@ -57,8 +59,9 @@ test("compressed response bytes, cookies, and request paths survive proxying", a
   registerRoute({ projectId: "test", slug: "proj-test", upstream: `http://127.0.0.1:${upstreamPort}` });
   try {
     // A protocol-relative path must stay on the configured upstream.
-    const result = await request("//untrusted.invalid/asset?q=1");
+    const result = await request("//untrusted.invalid/asset?q=1", "proj-test.preview.test:8080");
     expect(receivedPath).toBe("//untrusted.invalid/asset?q=1");
+    expect(receivedHost).toBe("proj-test.preview.test:8080");
     expect(result.body).toEqual(payload);
     expect(result.headers["content-encoding"]).toBe("gzip");
     expect(result.headers["set-cookie"]).toEqual(["first=1; Path=/", "second=2; Path=/"]);
@@ -91,10 +94,12 @@ test("SSE starts streaming without waiting for completion and client cancellatio
 
 test("WebSocket handshake, path, and frames pass through the gateway", async () => {
   let receivedPath = "";
+  let receivedHost = "";
   const upstream = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     fetch(req, server) {
       receivedPath = new URL(req.url).pathname;
+      receivedHost = req.headers.get("host")!;
       if (server.upgrade(req)) return;
       return new Response("upgrade required", { status: 426 });
     },
@@ -134,6 +139,7 @@ test("WebSocket handshake, path, and frames pass through the gateway", async () 
       req.end();
     });
     expect(receivedPath).toBe("/hmr");
+    expect(receivedHost).toBe("proj-test.preview.test");
     expect(echoed).toBe("hot reload");
   } finally { await upstream.stop(true); }
 });

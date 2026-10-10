@@ -85,9 +85,9 @@ export const SUBPROCESS_ENV_ALLOW_LIST: ReadonlySet<string> = new Set([
 ]);
 
 /** Builds the subprocess env from the allow-list plus `npm_config_*`, `VITE_*`. */
-export function sanitizeSubprocessEnv(): NodeJS.ProcessEnv {
+export function sanitizeSubprocessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {};
-    for (const [key, value] of Object.entries(process.env)) {
+    for (const [key, value] of Object.entries(source)) {
         if (!value) continue;
         if (
             SUBPROCESS_ENV_ALLOW_LIST.has(key) ||

@@ -27,6 +27,21 @@ Agent progress uses SSE through the API. Vite uses WebSockets for preview hot re
 
 Use a working local Kubernetes context and Docker Linux engine. PostgreSQL, Redis, and S3-compatible object storage must be reachable from Pods. `host.docker.internal` in the examples is intended for Docker Desktop; a K3s VM needs reachable VM/network addresses instead of that hostname. Populate object storage's `template/` prefix with the existing application template before creating a project.
 
+For Kind, use a CLI compatible with the node image. Kind 0.32.0 supports the Kubernetes 1.36.1 image; older Kind versions cannot load images into that image's containerd version. See the [Kind release notes](https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0). Keep the local kubeconfig separate if you have other clusters:
+
+```powershell
+New-Item -ItemType Directory -Force .tmp-deploy | Out-Null
+kind create cluster --name lovable --image kindest/node:v1.36.1 --config infra/k8s/kind.yaml --kubeconfig .tmp-deploy/lovable.kubeconfig
+$env:KUBECONFIG = "$PWD/.tmp-deploy/lovable.kubeconfig"
+kubectl get nodes
+```
+
+`kind.yaml` permits cgroup v1 for the current local Docker Desktop runtime. Kubernetes 1.36 refuses that runtime by default; this is a temporary local compatibility setting. Remove the override after moving the host to cgroup v2. See [Kubernetes cgroup documentation](https://v1-36.docs.kubernetes.io/docs/concepts/architecture/cgroups/).
+
+The Kind config also allows longer controller/scheduler leader lease renewals to tolerate slow local API/etcd responses. A sleeping or overloaded Docker Desktop host can still interrupt work; check control-plane logs and Pod events when diagnosing creation timeouts.
+
+The local overlay includes a Redis Deployment and ClusterIP Service. Use `redis://redis.lovable-system.svc.cluster.local:6379` in both secret files. Redis runs with append-only persistence on `emptyDir`: data survives a container restart, but is lost if the Pod or cluster is replaced. This is a disposable learning dependency. The local overlay also sets public URLs to port 8080 and makes Caddy a ClusterIP Service for port-forwarding.
+
 For K3s, disable its bundled Traefik when installing it (`--disable=traefik`) so Caddy's LoadBalancer Service can claim port 80. The project NetworkPolicy requires a CNI that enforces NetworkPolicy; verify this before relying on isolation. See [K3s networking services](https://docs.k3s.io/networking/networking-services).
 
 Edit the non-secret values in `infra/k8s/base/config.yaml`: object storage endpoint, bucket, provider/model, and public hostnames. After later ConfigMap changes, restart the affected platform Deployments so their environment updates. Newly created project Pods read the orchestrator's current configuration.
@@ -43,6 +58,8 @@ kubectl create secret generic project-runtime-secrets -n lovable-projects --from
 
 The `.env.local` files are ignored by Git and Docker. Platform Secrets hold database/auth credentials. Runtime Secrets hold Redis and object storage/provider credentials. Only control receives provider credentials; serving does not. The orchestrator uses Secret references and has no permission to read Secret contents.
 
+For Langfuse, add `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to the runtime secret file, and set `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT=local-k8s` in `platform-config`. The orchestrator forwards these settings to new control containers. The existing agent instrumentation creates a trace per prompt with Security, TemplateFacts, Planning, ReAct/tool calls, Build, Repair, and Final Result observations. Filter Langfuse by the `local-k8s` environment; see the [agent tracing runbook](../../apps/control/src/observability/RUNBOOK.md). Updating the Secret does not update environment variables in existing Pods; preserve project workspaces when planning changes.
+
 ## Build local images
 
 From the repository root:
@@ -58,6 +75,12 @@ docker build -f infra/docker/Dockerfile.serve -t ghcr.io/manav2209/lovable-serve
 
 These names match the local overlay. The cluster must have access to the built images: a separate K3s VM needs an image import or registry push. Confirm image availability instead of assuming the host's Docker image store is shared with Kubernetes.
 
+For Kind, import the six images before deployment:
+
+```powershell
+kind load docker-image --name lovable ghcr.io/manav2209/lovable-backend:local ghcr.io/manav2209/lovable-web:local ghcr.io/manav2209/lovable-ingress:local ghcr.io/manav2209/lovable-orchestrator:local ghcr.io/manav2209/lovable-control:local ghcr.io/manav2209/lovable-serve:local
+```
+
 For the first local database setup, run `bun run --cwd packages/database migrate` with a `DATABASE_URL` reachable from your terminal. This uses the checked-in Drizzle migrations. Verify success before starting the backend.
 
 ```powershell
@@ -67,7 +90,16 @@ kubectl rollout status deployment/orchestrator -n lovable-system --timeout=180s
 kubectl get pods,services -n lovable-system
 ```
 
-Open `http://app.127.0.0.1.nip.io`. If the LoadBalancer is pending, use `kubectl port-forward -n lovable-system service/caddy 8080:80`, change `FRONTEND_ORIGIN` to `http://app.127.0.0.1.nip.io:8080` and `PREVIEW_PUBLIC_PORT` to `8080`, reapply, and restart backend/orchestrator. Access the app and previews on port 8080. The hostnames must resolve locally; use hosts entries for the app and each test preview if your DNS blocks loopback answers.
+Run these forwards in two terminals, each using the local kubeconfig:
+
+```powershell
+kubectl --kubeconfig .tmp-deploy/lovable.kubeconfig port-forward --address 127.0.0.1 -n lovable-system service/caddy 8080:80
+kubectl --kubeconfig .tmp-deploy/lovable.kubeconfig port-forward --address 127.0.0.1 -n lovable-system service/redis 6380:6379
+```
+
+Open `http://app.127.0.0.1.nip.io:8080`. Your terminal can connect to Redis at `redis://127.0.0.1:6380`; Pods continue to use the internal Service DNS address. Keep the forwarding processes running. The hostnames must resolve locally; use hosts entries for the app and each test preview if your DNS blocks loopback answers.
+
+If the app suddenly gives `ConnectionRefused`, check the forwarding terminal as well as the Pods. A target restart can close a port-forward; rerun that command after the target is healthy. Restarting a forward does not recreate any project workspace.
 
 ## Published releases and migrations
 
@@ -110,5 +142,22 @@ docker run --rm -e APP_HOST=app.127.0.0.1.nip.io -e PREVIEW_DOMAIN=preview.127.0
 To run the shared-state integration tests locally, start a disposable Redis on a free port, set `TEST_REDIS_URL` to it, and run `bun test apps/backend/src/lib/sharedState.integration.test.ts`. Never point this variable at your production Redis. Without it, these tests are skipped.
 
 After creating a project, inspect `kubectl get pods,services -n lovable-projects`, `kubectl describe pod <pod-name> -n lovable-projects`, and each container's logs. `ImagePullBackOff` means the image or pull credentials are unavailable; `CreateContainerConfigError` often means a required Secret is missing; an unready serving container means its preview has not started or is failing.
+
+For local PowerShell debugging, select the separate cluster and find your project's Pod:
+
+```powershell
+$env:KUBECONFIG = "$PWD/.tmp-deploy/lovable.kubeconfig"
+$projectId = "<project-id>"
+$projectPod = kubectl get pods -n lovable-projects -l "projectId=$projectId" -o jsonpath='{.items[0].metadata.name}'
+kubectl describe pod $projectPod -n lovable-projects
+kubectl logs $projectPod -n lovable-projects -c control --tail=100 -f
+kubectl logs $projectPod -n lovable-projects -c control --previous --tail=100
+kubectl logs $projectPod -n lovable-projects -c serving --tail=100 -f
+kubectl logs -n lovable-system deployment/orchestrator --tail=100 -f
+```
+
+Run each `-f` command in a separate terminal, or press Ctrl+C to end that log stream. `control` handles generation/builds; `serving` supervises the preview. Inspect `Last State`, restart counts, and `Events` in `describe`; a liveness failure restarts a container, while an unready container alone does not. Do not delete an existing project Pod to troubleshoot it: that loses its `emptyDir` workspace.
+
+Build and prompt commands execute serially within each project. Manual builds publish queued, started, dependency-install, build, and result events through the authenticated backend SSE endpoint. A request timeout stops waiting for the result; it does not cancel the worker. Vite previews preserve the public Host header and allow only their own public hostname via `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`.
 
 The local Caddyfile uses HTTP explicitly. Public HTTPS needs real domains, certificate storage that survives Pod replacement, and a DNS challenge/provider configuration for wildcard preview certificates. The stock Caddy image does not contain arbitrary DNS provider modules. See [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https).

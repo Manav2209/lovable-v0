@@ -29,14 +29,20 @@ spec:
             - {name: config, mountPath: /config}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
+            timeoutSeconds: 5
           livenessProbe:
             httpGet: {path: /healthz, port: http}
+            timeoutSeconds: 5
+            periodSeconds: 15
+            failureThreshold: 6
           resources:
             requests: {cpu: 100m, memory: 64Mi}
             limits: {cpu: "1", memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: {drop: [ALL]}
+            # The official binary has this file capability; dropping it from
+            # the bounding set causes exec to fail even when listening on 8080.
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}
       volumes:
         - name: caddyfile
           configMap: {name: caddy-config}

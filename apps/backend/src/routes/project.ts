@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createRandomJobId, publishToStream } from "../lib/helper";
+import { createRandomJobId, publishProjectProgress, publishToStream } from "../lib/helper";
 import {
     BackendToOrchestator,
     PROJECT_BUILD,
@@ -176,14 +176,17 @@ projectRouter.post(
 
         const jobId = createRandomJobId();
 
-        await publishToStream(BackendToOrchestator, {
-            type: PROJECT_BUILD,
-            projectId,
-            jobId,
-            userId: req.userId!,
-        });
-
         try {
+            await publishToStream(BackendToOrchestator, {
+                type: PROJECT_BUILD,
+                projectId,
+                jobId,
+                userId: req.userId!,
+            });
+            await publishProjectProgress(projectId, {
+                type: "build_queued", jobId,
+                message: "Build queued. It will start after any current project task finishes.",
+            });
             const buildRes = await responseManager.wait(jobId, 600_000, [
                 PROJECT_BUILD_SUCCESS,
                 PROJECT_BUILD_FAILED,
@@ -218,6 +221,10 @@ projectRouter.post(
             }
         } catch (err) {
             console.error(err);
+            await publishProjectProgress(projectId, {
+                type: "build_wait_failed", jobId,
+                message: "The build request could not finish waiting for a result. The worker may still be processing it.",
+            });
             return res.status(504).json({
                 success: false,
                 data: null,

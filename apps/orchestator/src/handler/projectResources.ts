@@ -35,7 +35,7 @@ export function projectResources(projectId: string, env: NodeJS.ProcessEnv = pro
     ...["ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "GROQ_API_KEY", "AIROUTER_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"].map(key => ({
       name: key, valueFrom: { secretKeyRef: { name: secret, key, optional: true } },
     })),
-    ...["LLM_PROVIDER", "GROQ_MODEL", "AIROUTER_BASE_URL", "AIROUTER_MODEL", "LANGFUSE_ENABLED", "LANGFUSE_BASE_URL"].filter(key => env[key]).map(key => ({ name: key, value: env[key]! })),
+    ...["LLM_PROVIDER", "GROQ_MODEL", "AIROUTER_BASE_URL", "AIROUTER_MODEL", "LANGFUSE_ENABLED", "LANGFUSE_BASE_URL", "LANGFUSE_TRACING_ENVIRONMENT"].filter(key => env[key]).map(key => ({ name: key, value: env[key]! })),
   ];
   const securityContext = {
     allowPrivilegeEscalation: false, runAsNonRoot: true,
@@ -63,17 +63,17 @@ export function projectResources(projectId: string, env: NodeJS.ProcessEnv = pro
             {
               name: "control", image: controlImage, imagePullPolicy: "IfNotPresent", env: controlEnv,
               ports: [{ name: "control", containerPort: 3001 }],
-              startupProbe: { httpGet: { path: "/health", port: "control" }, periodSeconds: 2, failureThreshold: 60 },
-              readinessProbe: { httpGet: { path: "/health", port: "control" }, periodSeconds: 3 },
-              livenessProbe: { httpGet: { path: "/health", port: "control" }, periodSeconds: 15 },
+              startupProbe: { httpGet: { path: "/health", port: "control" }, timeoutSeconds: 5, periodSeconds: 2, failureThreshold: 60 },
+              readinessProbe: { httpGet: { path: "/health", port: "control" }, timeoutSeconds: 5, periodSeconds: 3 },
+              livenessProbe: { httpGet: { path: "/health", port: "control" }, timeoutSeconds: 5, periodSeconds: 15, failureThreshold: 6 },
               securityContext, resources, volumeMounts,
             },
             {
               name: "serving", image: serveImage, imagePullPolicy: "IfNotPresent", env: [...common, { name: "PREVIEW_ROUTING_MODE", value: serviceType === "ClusterIP" ? "cluster" : "registered" }],
               ports: [{ name: "http", containerPort: 3000 }, { name: "supervisor", containerPort: 3002 }],
-              startupProbe: { httpGet: { path: "/healthz", port: "supervisor" }, periodSeconds: 2, failureThreshold: 60 },
-              readinessProbe: { httpGet: { path: "/readyz", port: "supervisor" }, periodSeconds: 3 },
-              livenessProbe: { httpGet: { path: "/healthz", port: "supervisor" }, periodSeconds: 15 },
+              startupProbe: { httpGet: { path: "/healthz", port: "supervisor" }, timeoutSeconds: 5, periodSeconds: 2, failureThreshold: 60 },
+              readinessProbe: { httpGet: { path: "/readyz", port: "supervisor" }, timeoutSeconds: 5, periodSeconds: 3 },
+              livenessProbe: { httpGet: { path: "/healthz", port: "supervisor" }, timeoutSeconds: 5, periodSeconds: 15, failureThreshold: 6 },
               securityContext, resources, volumeMounts,
             },
           ],
