@@ -6,6 +6,9 @@ node_modules
 **/node_modules
 **/.env
 **/.env.*
+**/*.env.local
 .git
 .tmp-e2e-flow.mjs
 .tmp-sse-monitor.mjs
+.tmp-deploy/
+infra/k8s/releases/

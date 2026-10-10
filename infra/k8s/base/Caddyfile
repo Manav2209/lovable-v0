@@ -1,0 +1,33 @@
+{
+	auto_https off
+	admin off
+}
+
+:8080 {
+	@health path /healthz
+	handle @health {
+		respond "ok" 200
+	}
+
+	@app host {$APP_HOST}
+	handle @app {
+		@api path /api /api/*
+		handle @api {
+			reverse_proxy backend:80 {
+				flush_interval -1
+			}
+		}
+		handle {
+			reverse_proxy web:80
+		}
+	}
+
+	@preview host *.{$PREVIEW_DOMAIN}
+	handle @preview {
+		reverse_proxy apps-ingress:80 {
+			flush_interval -1
+		}
+	}
+
+	respond "Unknown host" 404
+}

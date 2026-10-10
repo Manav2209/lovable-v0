@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - redis.yaml
+patches:
+  - target:
+      kind: ConfigMap
+      name: platform-config
+    patch: |-
+      - op: replace
+        path: /data/FRONTEND_ORIGIN
+        value: http://app.127.0.0.1.nip.io:8080
+      - op: replace
+        path: /data/PREVIEW_PUBLIC_PORT
+        value: "8080"
+  - target:
+      kind: Service
+      name: caddy
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: ClusterIP

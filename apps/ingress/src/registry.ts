@@ -1,3 +1,5 @@
+import { projectServiceUrl } from "types";
+
 export type RouteRecord = {
     projectId: string;
     slug: string;
@@ -33,6 +35,14 @@ export function unregisterRoute(slug: string): boolean {
 }
 
 export function getRoute(slug: string): RouteRecord | undefined {
+    if (process.env.INGRESS_ROUTING_MODE === "cluster") {
+        return {
+            projectId: slug.slice(5),
+            slug,
+            upstream: projectServiceUrl(slug, process.env.K8S_NAMESPACE || "lovable-projects"),
+            registeredAt: "",
+        };
+    }
     return routes.get(slug);
 }
 

@@ -16,6 +16,7 @@ import {
     agentSseChannel,
 } from "types";
 import fs from "fs";
+import { createServingHealthServer } from "./health";
 import { checkIfProjectFilesExist, serveTheProject, projectDir as projectDirFor } from "./lib/helper";
 import {
     RedisManager,
@@ -23,13 +24,14 @@ import {
     parseStreamFields,
     readGroupLoop,
     StreamGroups,
+    ensureConsumerGroup,
 } from "shared-redis";
 
 console.log("Serving POD started with env:", {
     NODE_ENV: process.env.NODE_ENV,
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
-    REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
+    REDIS_CONFIGURED: Boolean(process.env.REDIS_URL),
     SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
     PREVIEW_DOMAIN: process.env.PREVIEW_DOMAIN || "preview.localhost",
 });
@@ -45,6 +47,7 @@ function resolveUpstream(): string {
 }
 
 async function registerPreview(projectId: string, upstream: string) {
+    if (process.env.PREVIEW_ROUTING_MODE === "cluster") return;
     const slug = toPreviewSlug(projectId);
     const ingressAdmin =
         process.env.INGRESS_ADMIN_URL || "http://127.0.0.1:8080";
@@ -298,8 +301,14 @@ async function main() {
     console.log("All Redis clients connected.");
     console.log("Serving POD Started");
 
+    const group = MY_PROJECT_ID ? `${StreamGroups.serve}-${MY_PROJECT_ID}` : StreamGroups.serve;
+    await Promise.all([
+        ensureConsumerGroup(ControlToServing, group),
+        ensureConsumerGroup(OrchestatorToServing, group),
+    ]);
     void ListenControl();
     void ListenOrchestator();
+    createServingHealthServer().listen(Number(process.env.SUPERVISOR_PORT || 3002), "0.0.0.0");
     await new Promise(() => {});
 }
 

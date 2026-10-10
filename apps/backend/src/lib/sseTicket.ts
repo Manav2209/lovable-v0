@@ -1,60 +1,27 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { RedisManager } from "shared-redis";
 
-/**
- * Short-lived, reusable SSE connection tickets (spec-05 §5).
- *
- * EventSource can't send headers, so the browser historically embedded the
- * long-lived JWT in the URL query string, leaking it into logs and history.
- * Instead, the frontend mints an opaque, short-lived ticket via an
- * authenticated endpoint and passes ONLY that token in the query string.
- * The ticket stays valid until its TTL so EventSource reconnects can reuse it.
- */
-export const SSE_TICKET_TTL_MS =
-    Number(process.env.SSE_TICKET_TTL_MS || 60000);
+export const SSE_TICKET_TTL_MS = Number(process.env.SSE_TICKET_TTL_MS || 60000);
 
-type Ticket = {
-    projectId: string;
-    userId: string;
-    expiresAt: number;
-};
-
-const tickets = new Map<string, Ticket>();
-
-function purgeExpired(now: number) {
-    for (const [token, ticket] of tickets) {
-        if (ticket.expiresAt < now) {
-            tickets.delete(token);
-        }
-    }
+function ticketKey(token: string) {
+  return `lovable:sse-ticket:${createHash("sha256").update(token).digest("hex")}`;
 }
 
-export function mintSseTicket(projectId: string, userId: string): string {
-    purgeExpired(Date.now());
-    const token = randomBytes(24).toString("base64url");
-    tickets.set(token, {
-        projectId,
-        userId,
-        expiresAt: Date.now() + SSE_TICKET_TTL_MS,
-    });
-    return token;
+/** Opaque, short-lived tickets can be reused for EventSource reconnects on any replica. */
+export async function mintSseTicket(projectId: string, userId: string): Promise<string> {
+  const token = randomBytes(24).toString("base64url");
+  const redis = await RedisManager.getWriter();
+  await redis.set(ticketKey(token), JSON.stringify({ projectId, userId }), { PX: SSE_TICKET_TTL_MS });
+  return token;
 }
 
-/**
- * Redeem a ticket. Returns the bound (projectId, userId) on success or null
- * when missing/expired. The ticket stays valid until it expires so that
- * EventSource auto-reconnects (which replay the same URL) can reuse it without
- * leaking the long-lived JWT into the query string.
- */
-export function redeemSseTicket(
-    token: string,
-): { projectId: string; userId: string } | null {
-    const ticket = tickets.get(token);
-    if (!ticket) return null;
-
-    if (ticket.expiresAt < Date.now()) {
-        tickets.delete(token);
-        return null;
-    }
-
-    return { projectId: ticket.projectId, userId: ticket.userId };
+export async function redeemSseTicket(token: string): Promise<{ projectId: string; userId: string } | null> {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null;
+  const redis = await RedisManager.getWriter();
+  const value = await redis.get(ticketKey(token));
+  if (!value) return null;
+  const ticket = JSON.parse(value) as { projectId?: unknown; userId?: unknown };
+  return typeof ticket.projectId === "string" && typeof ticket.userId === "string"
+    ? { projectId: ticket.projectId, userId: ticket.userId }
+    : null;
 }

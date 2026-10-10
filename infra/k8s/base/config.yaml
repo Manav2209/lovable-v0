@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: lovable-system
+data:
+  APP_HOST: app.127.0.0.1.nip.io
+  FRONTEND_ORIGIN: http://app.127.0.0.1.nip.io
+  PREVIEW_DOMAIN: preview.127.0.0.1.nip.io
+  PREVIEW_PUBLIC_PROTOCOL: http
+  PREVIEW_PUBLIC_PORT: "80"
+  K8S_NAMESPACE: lovable-projects
+  PROJECT_SERVICE_TYPE: ClusterIP
+  PROJECT_RUNTIME_SECRET: project-runtime-secrets
+  INGRESS_ROUTING_MODE: cluster
+  INGRESS_BIND_HOST: 0.0.0.0
+  INGRESS_PORT: "8080"
+  TRUST_PROXY: "1"
+  BUCKET_NAME: lovable
+  S3_API: https://REPLACE_WITH_OBJECT_STORAGE_ENDPOINT
+  LLM_PROVIDER: airouter
+  AIROUTER_BASE_URL: https://api.airouter.in/v1
+  AIROUTER_MODEL: openai/gpt-4o-mini
+  CONTROL_IMAGE: ghcr.io/manav2209/lovable-control:local
+  SERVE_IMAGE: ghcr.io/manav2209/lovable-serve:local

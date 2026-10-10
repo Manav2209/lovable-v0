@@ -1,8 +1,9 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { Request } from "express";
+import { RedisRateLimitStore } from "./redisRateLimitStore";
 
 function ipKey(req: Request): string {
-    return req.ip ?? "unknown";
+    return ipKeyGenerator(req.ip ?? "unknown");
 }
 
 /**
@@ -10,6 +11,7 @@ function ipKey(req: Request): string {
  * and credential-stuffing while allowing legitimate use (spec-05 §6).
  */
 export const authRateLimiter = rateLimit({
+    store: new RedisRateLimitStore("lovable:rate-limit:auth:"),
     windowMs: 15 * 60 * 1000, // 15 minutes
     limit: 20,
     standardHeaders: "draft-8",
@@ -28,6 +30,7 @@ export const authRateLimiter = rateLimit({
  * spin up unbounded clusters.
  */
 export const projectCreateRateLimiter = rateLimit({
+    store: new RedisRateLimitStore("lovable:rate-limit:project-create:"),
     windowMs: 60 * 60 * 1000, // 1 hour
     limit: 10,
     standardHeaders: "draft-8",

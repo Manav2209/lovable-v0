@@ -4,7 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "npx tsx src/index.ts",
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts",
+    "check-types": "tsc --noEmit",
     "test": "bun test"
   },
   "devDependencies": {
@@ -12,9 +14,6 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",

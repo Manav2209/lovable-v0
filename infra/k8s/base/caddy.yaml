@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: lovable-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: caddy}
+  template:
+    metadata:
+      labels: {app: caddy}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: caddy
+          image: caddy:2.10.2-alpine
+          envFrom: [{configMapRef: {name: platform-config}}]
+          ports: [{name: http, containerPort: 8080}]
+          volumeMounts:
+            - {name: caddyfile, mountPath: /etc/caddy, readOnly: true}
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /config}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            timeoutSeconds: 5
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # The official binary has this file capability; dropping it from
+            # the bounding set causes exec to fail even when listening on 8080.
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}
+      volumes:
+        - name: caddyfile
+          configMap: {name: caddy-config}
+        - {name: data, emptyDir: {}}
+        - {name: config, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: lovable-system
+spec:
+  type: LoadBalancer
+  selector: {app: caddy}
+  ports: [{name: http, port: 80, targetPort: http}]

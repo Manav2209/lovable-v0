@@ -2,6 +2,8 @@
 
 Prompt-to-app builder: describe a product, an agent scaffolds and edits a React sandbox, and you get a live preview.
 
+The Kubernetes deployment configuration and all Dockerfiles are in [`infra/`](infra/README.md). For the Caddy-based deployment and learning steps, start with [`infra/k8s/README.md`](infra/k8s/README.md). The hybrid development instructions below require explicit `PROJECT_SERVICE_TYPE=NodePort`, `K8S_NAMESPACE`, `CONTROL_IMAGE`, `SERVE_IMAGE`, and a `project-runtime-secrets` Secret in the project namespace.
+
 This monorepo (Bun workspaces + Turborepo) runs in a **hybrid** layout locally:
 
 - **Host:** `web`, `backend`, `orchestator`, `ingress`, Redis via `kubectl port-forward`

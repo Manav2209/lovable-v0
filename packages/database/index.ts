@@ -6,12 +6,11 @@ import * as schema from "./schema/index"
 
 
 // Create connection pool
-const pool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL!,
+  connectionTimeoutMillis: 5000,
+  query_timeout: 5000,
 });
 
 // Initialize Drizzle ORM
 export const db = drizzle(pool, { schema });
-
-
-console.log('✅ Database connected successfully!');

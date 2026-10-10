@@ -11,6 +11,10 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*.local
+/infra/k8s/examples/*.local
+/.tmp-deploy/
+/infra/k8s/releases/
 
 # Testing
 coverage

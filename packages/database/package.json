@@ -3,6 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "migrate": "bun run migrate.ts"
+  },
   "exports": {
     ".": "./index.ts",
     "./schema": "./schema"
@@ -12,9 +15,6 @@
     "@types/pg": "^8.16.0",
     "drizzle-kit": "^0.31.8",
     "tsx": "^4.21.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   },
   "dependencies": {
     "dotenv": "^17.2.3",

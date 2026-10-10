@@ -5,13 +5,12 @@
   "private": true,
   "scripts": {
     "dev": "bun run ./src/index.ts",
-    "start": "bun run ./src/index.ts"
+    "start": "bun run ./src/index.ts",
+    "check-types": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   },
   "dependencies": {
     "shared-redis": "*",

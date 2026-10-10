@@ -97,7 +97,9 @@ export class RedisManager {
     private static getOptions() {
         return {
             url: process.env.REDIS_URL || "redis://localhost:6379",
+            disableOfflineQueue: true,
             socket: {
+                connectTimeout: 5000,
                 keepAlive: true,
                 reconnectStrategy: (retries: number) =>
                     Math.min(retries * 100, 3000),

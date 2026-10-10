@@ -189,7 +189,7 @@ export const createConversation = async (req: Request, res: Response) => {
         const parsed = JSON.parse(response);
 
         if (parsed.type === PROMPT_RESPONSE) {
-            const ticket = mintSseTicket(projectId, req.userId ?? "");
+            const ticket = await mintSseTicket(projectId, req.userId ?? "");
             const sseUrl = `/api/v1/project/${projectId}/events?token=${encodeURIComponent(ticket)}`;
             return res.status(200).json({
                 success: true,

@@ -1,0 +1,147 @@
+name: deployment-images
+
+on:
+  pull_request:
+  push:
+    branches: [main, ops]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run check-types
+      - run: bun test
+        env:
+          TEST_REDIS_URL: redis://127.0.0.1:6379
+      - run: bun run --cwd apps/web build
+      - name: Validate Caddy configuration
+        run: >-
+          docker run --rm
+          -e APP_HOST=app.127.0.0.1.nip.io
+          -e PREVIEW_DOMAIN=preview.127.0.0.1.nip.io
+          -v "$PWD/infra/k8s/base/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile
+      - name: Render manifests
+        run: kubectl kustomize infra/k8s/overlays/local > /tmp/lovable-manifests.yaml
+
+  images:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            dockerfile: infra/docker/Dockerfile.backend
+          - component: web
+            dockerfile: infra/docker/Dockerfile.web
+          - component: ingress
+            dockerfile: infra/docker/Dockerfile.ingress
+          - component: orchestrator
+            dockerfile: infra/docker/Dockerfile.orchestrator
+          - component: control
+            dockerfile: infra/docker/Dockerfile.control
+          - component: serve
+            dockerfile: infra/docker/Dockerfile.serve
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: docker/setup-buildx-action@v3
+      - name: Image coordinates
+        id: coordinates
+        shell: bash
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lovable-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ steps.coordinates.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+      - name: Verify runtime container
+        env:
+          IMAGE: ${{ steps.coordinates.outputs.image }}
+          COMPONENT: ${{ matrix.component }}
+          REVISION: ${{ github.sha }}
+        run: bun infra/docker/smoke-image.ts "$COMPONENT" "$IMAGE:$REVISION"
+      - name: Publish validated image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.coordinates.outputs.image }}
+          REVISION: ${{ github.sha }}
+        run: docker push "$IMAGE:$REVISION"
+      - name: Record published image digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.coordinates.outputs.image }}
+          REVISION: ${{ github.sha }}
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          mkdir -p image-digests
+          export IMAGE_REF="$(docker image inspect "$IMAGE:$REVISION" --format '{{index .RepoDigests 0}}')"
+          python -c 'import os,json; json.dump({os.environ["COMPONENT"]:os.environ["IMAGE_REF"]},open("image-digests/"+os.environ["COMPONENT"]+".json","w"))'
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          name: image-digest-${{ matrix.component }}
+          path: image-digests/*.json
+
+  release:
+    needs: images
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: image-digests
+          merge-multiple: true
+      - name: Prepare immutable release overlay
+        run: |
+          python -c 'import glob,json; images={}; [images.update(json.load(open(p))) for p in glob.glob("image-digests/*.json")]; json.dump(images,open("images.json","w"))'
+          bun infra/k8s/scripts/prepare-release.ts --revision "${{ github.sha }}" --images images.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: infra/k8s/releases/${{ github.sha }}/

@@ -8,7 +8,7 @@ import { runProcess, resolveSafePath } from "../security";
 import { ControlToOrchestrator, ControlToServing, PROJECT_BUILD_FAILED, PROJECT_BUILD_SUCCESS, PROJECT_FAILED, PROJECT_RUN } from "types";
 import type { WorkflowState } from "../../graphs/workflow";
 
-export const buildProjectAndNotifyToRun = async (
+const buildProject = async (
   projectId: string,
   jobId?: string
 ) => {
@@ -62,6 +62,9 @@ export const buildProjectAndNotifyToRun = async (
 
   try {
     const viteReady = fs.existsSync(path.join(dir, "node_modules", "vite"));
+    if (!viteReady) {
+      sendSSEMessage(projectId, { type: "build_installing", jobId, message: "Installing project dependencies..." });
+    }
     const install = viteReady
       ? { success: true, stderr: "", error: undefined }
       : await runProcess("bun", ["install"], {
@@ -84,6 +87,7 @@ export const buildProjectAndNotifyToRun = async (
       return false;
     }
 
+    sendSSEMessage(projectId, { type: "building", jobId, message: "Running the project build..." });
     const build = await runProcess("bun", ["run", "build"], {
       cwd: dir,
       timeoutMs: 5 * 60_000,
@@ -123,6 +127,20 @@ export const buildProjectAndNotifyToRun = async (
     return false;
   }
 };
+
+export async function buildProjectAndNotifyToRun(projectId: string, jobId?: string): Promise<boolean> {
+  sendSSEMessage(projectId, { type: "build_started", jobId, message: "Build started" });
+  let success = false;
+  try {
+    success = await buildProject(projectId, jobId);
+    return success;
+  } finally {
+    sendSSEMessage(projectId, {
+      type: success ? "build_success" : "build_failed", jobId,
+      message: success ? "Build completed successfully" : "Build failed. Check the project build logs for details.",
+    });
+  }
+}
 
 const buildSourceInput = z.object({
   projectId: z.string().min(1, "Project ID is required"),

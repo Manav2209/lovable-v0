@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { startHealthServer } from "./health";
 import {
     BackendToOrchestator,
     OrchestatorToControl,
@@ -33,11 +34,12 @@ import {
     parseStreamFields,
     readGroupLoop,
     StreamGroups,
+    ensureConsumerGroup,
 } from "shared-redis";
 
 console.log("Orchestrator started with env:", {
     NODE_ENV: process.env.NODE_ENV,
-    REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
+    REDIS_CONFIGURED: Boolean(process.env.REDIS_URL),
     SKIP_K8S: process.env.SKIP_K8S || "true",
 });
 
@@ -431,6 +433,13 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 async function main() {
     await RedisManager.getWriter();
     console.log("All Redis clients connected.");
+
+    await Promise.all([
+        ensureConsumerGroup(BackendToOrchestator, StreamGroups.orch, "0"),
+        ensureConsumerGroup(ControlToOrchestrator, StreamGroups.orch),
+        ensureConsumerGroup(ServingToOrchestrator, StreamGroups.orch),
+    ]);
+    startHealthServer();
 
     await Promise.all([
         ListenBackend(),

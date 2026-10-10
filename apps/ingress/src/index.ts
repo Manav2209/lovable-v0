@@ -20,7 +20,7 @@ import {
     registerRoute,
     unregisterRoute,
 } from "./registry";
-import { proxyRequest } from "./proxy";
+import { proxyRequest, proxyUpgrade } from "./proxy";
 
 const PORT = Number(process.env.INGRESS_PORT || process.env.PORT || 8080);
 const BIND_HOST = process.env.INGRESS_BIND_HOST || "127.0.0.1";
@@ -116,7 +116,7 @@ async function handleAdmin(
                 slug,
                 upstream: body.upstream,
             });
-            // Fan-out so other ingress replicas stay in sync (optional)
+            // Legacy single-process registry. Cluster mode derives routes from Service DNS.
             await publishEnvelope(PreviewRegister, {
                 type: PREVIEW_REGISTER,
                 projectId: body.projectId,
@@ -167,10 +167,10 @@ async function handleAdmin(
     return false;
 }
 
-function createServer(): http.Server {
-    return http.createServer(async (req, res) => {
+export function createServer(): http.Server {
+    const server = http.createServer(async (req, res) => {
         const host = req.headers.host || "";
-        const url = new URL(req.url || "/", `http://${host || "localhost"}`);
+        const url = new URL(req.url || "/", "http://localhost");
 
         if (await handleAdmin(req, res, url.pathname)) {
             return;
@@ -190,6 +190,15 @@ function createServer(): http.Server {
 
         await proxyRequest(req, res, slug);
     });
+    server.on("upgrade", (req, socket, head) => {
+        const slug = slugFromHost(req.headers.host || "", DOMAIN);
+        if (!slug) {
+            socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+            return;
+        }
+        proxyUpgrade(req, socket, head, slug);
+    });
+    return server;
 }
 
 async function listenRegisterStream(): Promise<void> {
@@ -224,8 +233,16 @@ async function listenRegisterStream(): Promise<void> {
     });
 }
 
+let appServer: http.Server | undefined;
+let stopping = false;
+
 async function shutdown(signal: string) {
+    if (stopping) return;
+    stopping = true;
     console.log(`[ingress] ${signal}, shutting down...`);
+    const deadline = setTimeout(() => process.exit(1), 25_000);
+    deadline.unref();
+    if (appServer) await new Promise<void>(resolve => appServer!.close(() => resolve()));
     try {
         await RedisManager.quitAll();
     } catch {
@@ -234,18 +251,18 @@ async function shutdown(signal: string) {
     process.exit(0);
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-
 async function main() {
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
     console.log("Preview ingress starting:", {
         PORT,
         DOMAIN,
-        REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
+        REDIS_CONFIGURED: Boolean(process.env.REDIS_URL),
     });
 
     // Redis is optional for local HTTP-only registration / tests
-    const skipRedis = process.env.INGRESS_SKIP_REDIS === "true";
+    const skipRedis = process.env.INGRESS_SKIP_REDIS === "true" ||
+        process.env.INGRESS_ROUTING_MODE === "cluster";
     if (!skipRedis) {
         try {
             await RedisManager.getWriter();
@@ -260,10 +277,11 @@ async function main() {
             );
         }
     } else {
-        console.log("[ingress] INGRESS_SKIP_REDIS=true — HTTP register only");
+        console.log("[ingress] Redis registration disabled; routing mode:", process.env.INGRESS_ROUTING_MODE || "registered");
     }
 
     const server = createServer();
+    appServer = server;
     server.listen(PORT, BIND_HOST, () => {
         console.log(`[ingress] Listening on http://${BIND_HOST}:${PORT}`);
         console.log(
@@ -273,7 +291,7 @@ async function main() {
     });
 }
 
-main().catch((err) => {
+if (import.meta.main) main().catch((err) => {
     console.error("[ingress] Fatal:", err);
     process.exit(1);
 });

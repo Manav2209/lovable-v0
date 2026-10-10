@@ -26,6 +26,7 @@ import {
     parseStreamFields,
     readGroupLoop,
     StreamGroups,
+    ensureConsumerGroup,
 } from "shared-redis";
 
 const bucketName = process.env.BUCKET_NAME || "lovable";
@@ -34,7 +35,7 @@ console.log("Control POD started with env:", {
     NODE_ENV: process.env.NODE_ENV,
     PROJECT_ID: process.env.PROJECT_ID,
     BUCKET_NAME: process.env.BUCKET_NAME,
-    REDIS_URL: process.env.REDIS_URL || "redis://localhost:6379",
+    REDIS_CONFIGURED: Boolean(process.env.REDIS_URL),
     SHARED_DIR: process.env.SHARED_DIR || "/app/shared",
     GROQ_API_KEY: process.env.GROQ_API_KEY ? "***" : undefined,
 });
@@ -291,11 +292,14 @@ async function main() {
     console.log("redis connected");
     console.log("Control Pod is Running");
 
-    // Start stream listeners first so the per-project group exists before
-    // readiness passes and the orchestrator sends PROJECT_INITIALIZED.
+    // Establish both groups before the worker advertises health.
+    const group = MY_PROJECT_ID ? `${StreamGroups.control}-${MY_PROJECT_ID}` : StreamGroups.control;
+    await Promise.all([
+        ensureConsumerGroup(OrchestatorToControl, group),
+        ensureConsumerGroup(ServingToControl, group),
+    ]);
     void ListenOrchestator();
     void ListenServing();
-    await new Promise((r) => setTimeout(r, 1500));
     startSSEServer();
 
     // Keep process alive
